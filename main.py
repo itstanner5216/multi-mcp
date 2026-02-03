@@ -26,6 +26,12 @@ def parse_args():
         default="INFO",
         help="Logging level",
     )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="API key for authentication (also configurable via MULTI_MCP_API_KEY env var)",
+    )
 
     return parser.parse_args()
 
@@ -40,5 +46,6 @@ if __name__ == "__main__":
         host=args.host,
         port=args.port,
         log_level=args.log_level,
+        api_key=args.api_key,
     )
     asyncio.run(server.run())
