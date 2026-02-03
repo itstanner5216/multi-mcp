@@ -1,7 +1,7 @@
 import os
 import uvicorn
 import json
-from typing import Literal,Any,Optional
+from typing import Literal, Any, Optional
 from pydantic_settings import BaseSettings
 
 from mcp.server.stdio import stdio_server
@@ -16,14 +16,17 @@ from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.mcp_proxy import MCPProxyServer
 from src.utils.logger import configure_logging, get_logger
 
+
 class MCPSettings(BaseSettings):
     """Configuration settings for the MultiMCP server."""
+
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = 8085
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
-    config: str="./mcp.json"
+    config: str = "./mcp.json"
+
 
 class MultiMCP:
     def __init__(self, **settings: Any):
@@ -32,10 +35,11 @@ class MultiMCP:
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
 
-
     async def run(self):
         """Entry point to run the MultiMCP server: loads config, initializes clients, starts server."""
-        self.logger.info(f"🚀 Starting MultiMCP with transport: {self.settings.transport}")
+        self.logger.info(
+            f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
+        )
         config = self.load_mcp_config(path=self.settings.config)
         if not config:
             self.logger.error("❌ Failed to load MCP config.")
@@ -55,11 +59,10 @@ class MultiMCP:
         finally:
             await clients_manager.close()
 
-
-    def load_mcp_config(self,path="./mcp.json"):
+    def load_mcp_config(self, path="./mcp.json"):
         """Loads MCP JSON configuration From File."""
         if not os.path.exists(path):
-            print(f"Error: {path} does not exist.")
+            self.logger.error(f"❌ Config file does not exist: {path}")
             return None
 
         with open(path, "r", encoding="utf-8") as file:
@@ -67,9 +70,8 @@ class MultiMCP:
                 data = json.load(file)
                 return data
             except json.JSONDecodeError as e:
-                print(f"Error parsing JSON: {e}")
+                self.logger.error(f"❌ Error parsing JSON config: {e}")
                 return None
-
 
     async def start_server(self):
         """Start the proxy server in stdio or SSE mode."""
@@ -94,7 +96,9 @@ class MultiMCP:
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request):
-            async with sse.connect_sse(request.scope, request.receive, request._send) as streams:
+            async with sse.connect_sse(
+                request.scope, request.receive, request._send
+            ) as streams:
                 await self.proxy.run(
                     streams[0],
                     streams[1],
@@ -106,11 +110,18 @@ class MultiMCP:
             routes=[
                 Route("/sse", endpoint=handle_sse),
                 Mount("/messages/", app=sse.handle_post_message),
-
                 # Dynamic endpoints
-                Route("/mcp_servers", endpoint=self.handle_mcp_servers, methods=["GET", "POST"]),
-                Route("/mcp_servers/{name}", endpoint=self.handle_mcp_servers, methods=["DELETE"]),
-                Route("/mcp_tools", endpoint=self.handle_mcp_tools, methods=["GET"])
+                Route(
+                    "/mcp_servers",
+                    endpoint=self.handle_mcp_servers,
+                    methods=["GET", "POST"],
+                ),
+                Route(
+                    "/mcp_servers/{name}",
+                    endpoint=self.handle_mcp_servers,
+                    methods=["DELETE"],
+                ),
+                Route("/mcp_tools", endpoint=self.handle_mcp_tools, methods=["GET"]),
             ],
         )
 
@@ -122,6 +133,7 @@ class MultiMCP:
         )
         server = uvicorn.Server(config)
         await server.serve()
+
     async def handle_mcp_servers(self, request: Request) -> JSONResponse:
         """Handle GET/POST/DELETE to list, add, or remove MCP clients at runtime."""
         method = request.method
@@ -135,13 +147,17 @@ class MultiMCP:
                 payload = await request.json()
 
                 if "mcpServers" not in payload:
-                    return JSONResponse({"error": "Missing 'mcpServers' in payload"}, status_code=400)
+                    return JSONResponse(
+                        {"error": "Missing 'mcpServers' in payload"}, status_code=400
+                    )
 
                 # Create clients from full `mcpServers` dict
                 new_clients = await self.proxy.client_manager.create_clients(payload)
 
                 if not new_clients:
-                    return JSONResponse({"error": "No clients were created"}, status_code=500)
+                    return JSONResponse(
+                        {"error": "No clients were created"}, status_code=500
+                    )
 
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
@@ -154,15 +170,21 @@ class MultiMCP:
         elif method == "DELETE":
             name = request.path_params.get("name")
             if not name:
-                return JSONResponse({"error": "Missing client name in path"}, status_code=400)
+                return JSONResponse(
+                    {"error": "Missing client name in path"}, status_code=400
+                )
 
             client = self.proxy.client_manager.clients.get(name)
             if not client:
-                return JSONResponse({"error": f"No client named '{name}'"}, status_code=404)
+                return JSONResponse(
+                    {"error": f"No client named '{name}'"}, status_code=404
+                )
 
             try:
                 await self.proxy.unregister_client(name)
-                return JSONResponse({"message": f"Client '{name}' removed successfully"})
+                return JSONResponse(
+                    {"message": f"Client '{name}' removed successfully"}
+                )
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=500)
 
