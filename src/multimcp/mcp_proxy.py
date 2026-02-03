@@ -1,15 +1,18 @@
 from typing import Any, Optional
+import asyncio
 from mcp import server, types
 from mcp.client.session import ClientSession
 from src.utils.logger import get_logger
 from src.multimcp.mcp_client import MCPClientManager
 from dataclasses import dataclass
 
+
 @dataclass
 class ToolMapping:
     server_name: str
     client: ClientSession
-    tool :types.Tool
+    tool: types.Tool
+
 
 class MCPProxyServer(server.Server):
     """An MCP Proxy Server that forwards requests to remote MCP servers."""
@@ -17,9 +20,12 @@ class MCPProxyServer(server.Server):
     def __init__(self, client_manager: MCPClientManager):
         super().__init__("MultiMCP proxy Server")
         self.capabilities: dict[str, types.ServerCapabilities] = {}
-        self.tool_to_server: dict[str, ToolMapping] = {}      # Support same tool name in diffrent mcp server
+        self.tool_to_server: dict[
+            str, ToolMapping
+        ] = {}  # Support same tool name in different mcp server
         self.prompt_to_server: dict[str, ClientSession] = {}
         self.resource_to_server: dict[str, ClientSession] = {}
+        self._register_lock = asyncio.Lock()  # Lock for concurrent register/unregister
         self._register_request_handlers()
         self.logger = get_logger("multi_mcp.ProxyServer")
         self.client_manager: Optional[MCPClientManager] = client_manager
@@ -42,47 +48,75 @@ class MCPProxyServer(server.Server):
     async def initialize_single_client(self, name: str, client: ClientSession) -> None:
         """Initialize a specific client and map its capabilities."""
 
+        # Validate name doesn't contain separator
+        if "::" in name:
+            raise ValueError(f"Server name '{name}' cannot contain '::' separator")
+
         self.logger.info(f"try initialize client {name}: {client}")
         result = await client.initialize()
         self.capabilities[name] = result.capabilities
 
         if result.capabilities.tools:
-            await self._initialize_tools_for_client(name,client)
+            await self._initialize_tools_for_client(name, client)
 
         if result.capabilities.prompts:
             prompts_result = await client.list_prompts()
             for prompt in prompts_result.prompts:
-                self.prompt_to_server[prompt.name] = client
+                # Validate prompt name
+                if "::" in prompt.name:
+                    raise ValueError(
+                        f"Prompt name '{prompt.name}' cannot contain '::' separator"
+                    )
+                # Namespace the prompt
+                key = self._make_key(name, prompt.name)
+                self.prompt_to_server[key] = client
 
         if result.capabilities.resources:
             resources_result = await client.list_resources()
             for resource in resources_result.resources:
-                self.resource_to_server[resource.name] = client
+                # Use resource name if available, otherwise use URI
+                resource_key = resource.name if resource.name else resource.uri
+                # Validate resource key
+                if "::" in resource_key:
+                    raise ValueError(
+                        f"Resource key '{resource_key}' cannot contain '::' separator"
+                    )
+                # Namespace the resource
+                key = self._make_key(name, resource_key)
+                self.resource_to_server[key] = client
 
     async def register_client(self, name: str, client: ClientSession) -> None:
         """Add a new client and register its capabilities."""
-        self.client_manager.clients[name] = client
-        # Re-fetch capabilities (like on startup)
-        await self.initialize_single_client(name, client)
+        async with self._register_lock:
+            self.client_manager.clients[name] = client
+            # Re-fetch capabilities (like on startup)
+            await self.initialize_single_client(name, client)
 
     async def unregister_client(self, name: str) -> None:
         """Remove a client and clean up all its associated mappings."""
-        client = self.client_manager.clients.get(name)
-        if not client:
-            self.logger.warning(f"⚠️ Tried to unregister unknown client: {name}")
-            return
+        async with self._register_lock:
+            client = self.client_manager.clients.get(name)
+            if not client:
+                self.logger.warning(f"⚠️ Tried to unregister unknown client: {name}")
+                return
 
-        self.logger.info(f"🗑️ Unregistering client: {name}")
-        del self.client_manager.clients[name]
+            self.logger.info(f"🗑️ Unregistering client: {name}")
+            del self.client_manager.clients[name]
 
-        self.capabilities.pop(name, None)
+            self.capabilities.pop(name, None)
 
-        self.tool_to_server     = {k: v for k, v in self.tool_to_server.items() if v.client != client}
-        self.prompt_to_server   = {k: v for k, v in self.prompt_to_server.items() if client != client}
-        self.resource_to_server = {k: v for k, v in self.resource_to_server.items() if client != client}
+            # Fix: correct filter condition - remove entries where client matches
+            self.tool_to_server = {
+                k: v for k, v in self.tool_to_server.items() if v.client != client
+            }
+            self.prompt_to_server = {
+                k: v for k, v in self.prompt_to_server.items() if v != client
+            }
+            self.resource_to_server = {
+                k: v for k, v in self.resource_to_server.items() if v != client
+            }
 
-        self.logger.info(f"✅ Client '{name}' fully unregistered.")
-
+            self.logger.info(f"✅ Client '{name}' fully unregistered.")
 
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
@@ -96,6 +130,7 @@ class MCPProxyServer(server.Server):
                 self.logger.error(f"Error fetching tools from {name}: {e}")
 
         return types.ServerResult(tools=all_tools)
+
     async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
         """Invoke a tool on the correct backend MCP server."""
         tool_name = req.params.name
@@ -103,8 +138,12 @@ class MCPProxyServer(server.Server):
 
         if tool_item:
             try:
-                self.logger.info(f"✅ Calling tool '{tool_name}' on its associated server")
-                result = await tool_item.client.call_tool(tool_item.tool.name, req.params.arguments or {})
+                self.logger.info(
+                    f"✅ Calling tool '{tool_name}' on its associated server"
+                )
+                result = await tool_item.client.call_tool(
+                    tool_item.tool.name, req.params.arguments or {}
+                )
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to call tool '{tool_name}': {e}")
@@ -112,21 +151,28 @@ class MCPProxyServer(server.Server):
             self.logger.error(f"⚠️ Tool '{tool_name}' not found in any server.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Tool '{tool_name}' not found!")],
+            content=[
+                types.TextContent(type="text", text=f"Tool '{tool_name}' not found!")
+            ],
             isError=True,
         )
 
     ## Prompts capabilities
     async def _list_prompts(self, _: Any) -> types.ServerResult:
-        """Aggregate prompts from all remote MCP servers and return a combined list."""
+        """Aggregate prompts from all remote MCP servers and return a combined list with namespacing."""
         all_prompts = []
         for name, client in self.client_manager.clients.items():
             # Only call servers that support prompts capability
-            if not self.capabilities.get(name, {}).get('prompts'):
+            caps = self.capabilities.get(name)
+            if not caps or not caps.prompts:
                 continue
             try:
-                prompts = await client.list_prompts()
-                all_prompts.extend(prompts.prompts)  # .prompts, not raw list
+                prompts_result = await client.list_prompts()
+                # Namespace each prompt
+                for prompt in prompts_result.prompts:
+                    namespaced_prompt = prompt.model_copy()
+                    namespaced_prompt.name = self._make_key(name, prompt.name)
+                    all_prompts.append(namespaced_prompt)
             except Exception as e:
                 self.logger.error(f"Error fetching prompts from {name}: {e}")
 
@@ -147,7 +193,11 @@ class MCPProxyServer(server.Server):
             self.logger.error(f"⚠️ Prompt '{prompt_name}' not found in any server.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Prompt '{prompt_name}' not found!")],
+            content=[
+                types.TextContent(
+                    type="text", text=f"Prompt '{prompt_name}' not found!"
+                )
+            ],
             isError=True,
         )
 
@@ -166,27 +216,40 @@ class MCPProxyServer(server.Server):
             self.logger.error(f"⚠️ Prompt '{prompt_name}' not found for completion.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Prompt '{prompt_name}' not found for completion!")],
+            content=[
+                types.TextContent(
+                    type="text",
+                    text=f"Prompt '{prompt_name}' not found for completion!",
+                )
+            ],
             isError=True,
         )
 
     ## Resources capabilities
     async def _list_resources(self, _: Any) -> types.ServerResult:
-        """Aggregate resources from all remote MCP servers and return a combined list."""
+        """Aggregate resources from all remote MCP servers and return a combined list with namespacing."""
         all_resources = []
         for name, client in self.client_manager.clients.items():
             # Only call servers that support resources capability
-            if not self.capabilities.get(name, {}).get('resources'):
+            caps = self.capabilities.get(name)
+            if not caps or not caps.resources:
                 continue
             try:
-                resources = await client.list_resources()
-                all_resources.extend(resources.resources)  # .resources, not raw list
+                resources_result = await client.list_resources()
+                # Namespace each resource using its name (or URI as fallback)
+                for resource in resources_result.resources:
+                    namespaced_resource = resource.model_copy()
+                    resource_key = resource.name if resource.name else resource.uri
+                    namespaced_resource.name = self._make_key(name, resource_key)
+                    all_resources.append(namespaced_resource)
             except Exception as e:
                 self.logger.error(f"Error fetching resources from {name}: {e}")
 
         return types.ServerResult(resources=all_resources)
 
-    async def _read_resource(self, req: types.ReadResourceRequest) -> types.ServerResult:
+    async def _read_resource(
+        self, req: types.ReadResourceRequest
+    ) -> types.ServerResult:
         """Read a resource from the appropriate backend MCP server."""
         resource_uri = req.params.uri
         client = self.resource_to_server.get(resource_uri)
@@ -201,10 +264,17 @@ class MCPProxyServer(server.Server):
             self.logger.error(f"⚠️ Resource '{resource_uri}' not found in any server.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Resource '{resource_uri}' not found!")],
+            content=[
+                types.TextContent(
+                    type="text", text=f"Resource '{resource_uri}' not found!"
+                )
+            ],
             isError=True,
         )
-    async def _subscribe_resource(self, req: types.SubscribeRequest) -> types.ServerResult:
+
+    async def _subscribe_resource(
+        self, req: types.SubscribeRequest
+    ) -> types.ServerResult:
         """Subscribe to a resource for updates on a backend MCP server."""
         uri = req.params.uri
         client = self.resource_to_server.get(uri)
@@ -219,11 +289,17 @@ class MCPProxyServer(server.Server):
             self.logger.error(f"⚠️ Resource '{uri}' not found for subscription.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Resource '{uri}' not found for subscription!")],
+            content=[
+                types.TextContent(
+                    type="text", text=f"Resource '{uri}' not found for subscription!"
+                )
+            ],
             isError=True,
         )
 
-    async def _unsubscribe_resource(self, req: types.UnsubscribeRequest) -> types.ServerResult:
+    async def _unsubscribe_resource(
+        self, req: types.UnsubscribeRequest
+    ) -> types.ServerResult:
         """Unsubscribe from a previously subscribed resource."""
         uri = req.params.uri
         client = self.resource_to_server.get(uri)
@@ -233,17 +309,25 @@ class MCPProxyServer(server.Server):
                 await client.unsubscribe_resource(uri)
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
-                self.logger.error(f"❌ Failed to unsubscribe from resource '{uri}': {e}")
+                self.logger.error(
+                    f"❌ Failed to unsubscribe from resource '{uri}': {e}"
+                )
         else:
             self.logger.error(f"⚠️ Resource '{uri}' not found for unsubscription.")
 
         return types.ServerResult(
-            content=[types.TextContent(type="text", text=f"Resource '{uri}' not found for unsubscription!")],
+            content=[
+                types.TextContent(
+                    type="text", text=f"Resource '{uri}' not found for unsubscription!"
+                )
+            ],
             isError=True,
         )
 
     # Utilization function
-    async def _set_logging_level(self, req: types.SetLevelRequest) -> types.ServerResult:
+    async def _set_logging_level(
+        self, req: types.SetLevelRequest
+    ) -> types.ServerResult:
         """Broadcast a new logging level to all connected clients."""
         for client in self.client_manager.clients.values():
             try:
@@ -253,7 +337,9 @@ class MCPProxyServer(server.Server):
 
         return types.ServerResult(types.EmptyResult())
 
-    async def _send_progress_notification(self, req: types.ProgressNotification) -> None:
+    async def _send_progress_notification(
+        self, req: types.ProgressNotification
+    ) -> None:
         """Relay a progress update to all backend clients."""
         for client in self.client_manager.clients.values():
             try:
@@ -265,29 +351,31 @@ class MCPProxyServer(server.Server):
             except Exception as e:
                 self.logger.error(f"❌ Failed to send progress notification: {e}")
 
-
     def _register_request_handlers(self) -> None:
         """Dynamically registers handlers for all MCP requests."""
 
         # Register all request handlers
         self.request_handlers[types.ListPromptsRequest] = self._list_prompts
-        self.request_handlers[types.GetPromptRequest]   = self._get_prompt
-        self.request_handlers[types.CompleteRequest]    = self._complete
+        self.request_handlers[types.GetPromptRequest] = self._get_prompt
+        self.request_handlers[types.CompleteRequest] = self._complete
 
         self.request_handlers[types.ListResourcesRequest] = self._list_resources
-        self.request_handlers[types.ReadResourceRequest]  = self._read_resource
-        self.request_handlers[types.SubscribeRequest]     = self._subscribe_resource
-        self.request_handlers[types.UnsubscribeRequest]   = self._unsubscribe_resource
-
+        self.request_handlers[types.ReadResourceRequest] = self._read_resource
+        self.request_handlers[types.SubscribeRequest] = self._subscribe_resource
+        self.request_handlers[types.UnsubscribeRequest] = self._unsubscribe_resource
 
         self.request_handlers[types.ListToolsRequest] = self._list_tools
-        self.request_handlers[types.CallToolRequest]  = self._call_tool
+        self.request_handlers[types.CallToolRequest] = self._call_tool
 
-        self.notification_handlers[types.ProgressNotification] = self._send_progress_notification
+        self.notification_handlers[types.ProgressNotification] = (
+            self._send_progress_notification
+        )
 
-        self.request_handlers[types.SetLevelRequest]           = self._set_logging_level
+        self.request_handlers[types.SetLevelRequest] = self._set_logging_level
 
-    async def _initialize_tools_for_client(self, server_name: str, client: ClientSession) -> list[types.Tool]:
+    async def _initialize_tools_for_client(
+        self, server_name: str, client: ClientSession
+    ) -> list[types.Tool]:
         """Fetch tools from a client, populate tool_to_server, and return them with namespaced keys."""
         tool_list = []
 
@@ -297,9 +385,7 @@ class MCPProxyServer(server.Server):
 
             # Store ToolMapping object
             self.tool_to_server[key] = ToolMapping(
-                server_name=server_name,
-                client=client,
-                tool=tool
+                server_name=server_name, client=client, tool=tool
             )
 
             # Create a copy of the tool with updated key as name
@@ -311,10 +397,13 @@ class MCPProxyServer(server.Server):
 
     @staticmethod
     def _make_key(server_name: str, item_name: str) -> str:
-        """Returns a namespaced key like 'server_item' to uniquely identify items per server."""
-        return f"{server_name}_{item_name}"
+        """Returns a namespaced key like 'server::item' to uniquely identify items per server."""
+        return f"{server_name}::{item_name}"
 
     @staticmethod
     def _split_key(key: str) -> tuple[str, str]:
         """Splits a namespaced key back into (server, item)."""
-        return key.split("_", 1)
+        parts = key.split("::", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid namespaced key: {key}")
+        return (parts[0], parts[1])
