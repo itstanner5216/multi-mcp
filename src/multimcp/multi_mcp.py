@@ -122,6 +122,7 @@ class MultiMCP:
                     methods=["DELETE"],
                 ),
                 Route("/mcp_tools", endpoint=self.handle_mcp_tools, methods=["GET"]),
+                Route("/health", endpoint=self.handle_health, methods=["GET"]),
             ],
         )
 
@@ -205,6 +206,34 @@ class MultiMCP:
                     tools_by_server[server_name] = f"❌ Error: {str(e)}"
 
             return JSONResponse({"tools": tools_by_server})
+
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def handle_health(self, request: Request) -> JSONResponse:
+        """Return health status with connected and pending server counts."""
+        try:
+            if not self.proxy:
+                return JSONResponse(
+                    {"status": "unavailable", "error": "Proxy not initialized"},
+                    status_code=503,
+                )
+
+            # Count connected servers
+            connected_count = len(self.proxy.client_manager.clients)
+
+            # Count pending servers (Task 05 will add pending_configs)
+            # Use getattr to gracefully handle absence of pending_configs
+            pending_configs = getattr(self.proxy.client_manager, "pending_configs", {})
+            pending_count = len(pending_configs)
+
+            return JSONResponse(
+                {
+                    "status": "healthy",
+                    "connected_servers": connected_count,
+                    "pending_servers": pending_count,
+                }
+            )
 
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
