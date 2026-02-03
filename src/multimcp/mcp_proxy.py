@@ -2,6 +2,7 @@ from typing import Any, Optional
 import asyncio
 from mcp import server, types
 from mcp.client.session import ClientSession
+from mcp.server.session import ServerSession
 from src.utils.logger import get_logger
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.audit import AuditLogger
@@ -32,6 +33,8 @@ class MCPProxyServer(server.Server):
         self.client_manager: Optional[MCPClientManager] = client_manager
         # Initialize audit logger
         self.audit_logger = AuditLogger()
+        # Store active server session for sending notifications
+        self._server_session: Optional[ServerSession] = None
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -94,6 +97,10 @@ class MCPProxyServer(server.Server):
             self.client_manager.clients[name] = client
             # Re-fetch capabilities (like on startup)
             await self.initialize_single_client(name, client)
+            # Send notification if server has tools capability
+            caps = self.capabilities.get(name)
+            if caps and caps.tools:
+                await self._send_tools_list_changed()
 
     async def unregister_client(self, name: str) -> None:
         """Remove a client and clean up all its associated mappings."""
@@ -102,6 +109,10 @@ class MCPProxyServer(server.Server):
             if not client:
                 self.logger.warning(f"⚠️ Tried to unregister unknown client: {name}")
                 return
+
+            # Check if client had tools capability before removing
+            caps = self.capabilities.get(name)
+            had_tools = caps and caps.tools if caps else False
 
             self.logger.info(f"🗑️ Unregistering client: {name}")
             del self.client_manager.clients[name]
@@ -120,6 +131,10 @@ class MCPProxyServer(server.Server):
             }
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
+
+            # Send notification if client had tools capability
+            if had_tools:
+                await self._send_tools_list_changed()
 
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
@@ -446,3 +461,57 @@ class MCPProxyServer(server.Server):
         if len(parts) != 2:
             raise ValueError(f"Invalid namespaced key: {key}")
         return (parts[0], parts[1])
+
+    async def _send_tools_list_changed(self) -> None:
+        """Send tools/list_changed notification if a session is active."""
+        if self._server_session:
+            try:
+                await self._server_session.send_tool_list_changed()
+                self.logger.info("📢 Sent tools/list_changed notification")
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to send tools/list_changed notification: {e}"
+                )
+        else:
+            self.logger.debug(
+                "⚠️ No active session to send tools/list_changed notification"
+            )
+
+    async def run(
+        self,
+        read_stream,
+        write_stream,
+        initialization_options,
+        raise_exceptions: bool = False,
+    ):
+        """Override run to capture the server session for notifications."""
+        # Import here to avoid circular dependencies
+        from mcp.server.session import ServerSession
+        from contextlib import AsyncExitStack
+        import anyio
+
+        async with AsyncExitStack() as stack:
+            lifespan_context = await stack.enter_async_context(self.lifespan(self))
+            session = await stack.enter_async_context(
+                ServerSession(read_stream, write_stream, initialization_options)
+            )
+
+            # Store session reference for sending notifications
+            self._server_session = session
+            self.logger.debug("🔗 Server session stored for notifications")
+
+            # Call parent's message handling loop
+            async with anyio.create_task_group() as tg:
+                async for message in session.incoming_messages:
+                    self.logger.debug(f"Received message: {message}")
+
+                    tg.start_soon(
+                        self._handle_message,
+                        message,
+                        session,
+                        lifespan_context,
+                        raise_exceptions,
+                    )
+
+            # Clear session when done
+            self._server_session = None
