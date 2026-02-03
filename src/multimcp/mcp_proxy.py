@@ -4,6 +4,7 @@ from mcp import server, types
 from mcp.client.session import ClientSession
 from src.utils.logger import get_logger
 from src.multimcp.mcp_client import MCPClientManager
+from src.multimcp.utils.audit import AuditLogger
 from dataclasses import dataclass
 
 
@@ -29,6 +30,8 @@ class MCPProxyServer(server.Server):
         self._register_request_handlers()
         self.logger = get_logger("multi_mcp.ProxyServer")
         self.client_manager: Optional[MCPClientManager] = client_manager
+        # Initialize audit logger
+        self.audit_logger = AuditLogger()
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -135,6 +138,7 @@ class MCPProxyServer(server.Server):
         """Invoke a tool on the correct backend MCP server."""
         tool_name = req.params.name
         tool_item = self.tool_to_server.get(tool_name)
+        arguments = req.params.arguments or {}
 
         if tool_item:
             try:
@@ -142,13 +146,48 @@ class MCPProxyServer(server.Server):
                     f"✅ Calling tool '{tool_name}' on its associated server"
                 )
                 result = await tool_item.client.call_tool(
-                    tool_item.tool.name, req.params.arguments or {}
+                    tool_item.tool.name, arguments
                 )
+
+                # Log successful tool invocation
+                self.audit_logger.log_tool_call(
+                    tool_name=tool_name,
+                    server_name=tool_item.server_name,
+                    arguments=arguments,
+                )
+
                 return types.ServerResult(result)
             except Exception as e:
+                error_msg = str(e)
                 self.logger.error(f"❌ Failed to call tool '{tool_name}': {e}")
+
+                # Log tool failure
+                self.audit_logger.log_tool_failure(
+                    tool_name=tool_name,
+                    server_name=tool_item.server_name,
+                    arguments=arguments,
+                    error=error_msg,
+                )
+
+                # Return error to client
+                return types.ServerResult(
+                    content=[
+                        types.TextContent(
+                            type="text", text=f"Tool '{tool_name}' failed: {error_msg}"
+                        )
+                    ],
+                    isError=True,
+                )
         else:
             self.logger.error(f"⚠️ Tool '{tool_name}' not found in any server.")
+
+            # Log tool not found as failure (no server name since tool doesn't exist)
+            self.audit_logger.log_tool_failure(
+                tool_name=tool_name,
+                server_name="unknown",
+                arguments=arguments,
+                error=f"Tool '{tool_name}' not found in any server",
+            )
 
         return types.ServerResult(
             content=[
