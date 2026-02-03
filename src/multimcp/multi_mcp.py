@@ -26,6 +26,10 @@ class MCPSettings(BaseSettings):
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
     config: str = "./mcp.json"
+    api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
+
+    class Config:
+        env_prefix = "MULTI_MCP_"
 
 
 class MultiMCP:
@@ -34,6 +38,11 @@ class MultiMCP:
         configure_logging(level=self.settings.log_level)
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
+
+    @property
+    def auth_enabled(self) -> bool:
+        """Check if API key authentication is enabled."""
+        return self.settings.api_key is not None and len(self.settings.api_key) > 0
 
     async def run(self):
         """Entry point to run the MultiMCP server: loads config, initializes clients, starts server."""
@@ -73,6 +82,53 @@ class MultiMCP:
                 self.logger.error(f"❌ Error parsing JSON config: {e}")
                 return None
 
+    def _check_auth(self, request: Request) -> Optional[JSONResponse]:
+        """
+        Check if request is authenticated.
+
+        Returns None if authenticated, JSONResponse with 401 if not.
+        """
+        if not self.auth_enabled:
+            return None  # Auth disabled, allow request
+
+        # For SSE endpoint, check query parameter
+        if request.url.path == "/sse":
+            token = request.query_params.get("token")
+            if token == self.settings.api_key:
+                return None  # Valid token
+            return JSONResponse(
+                {"error": "Unauthorized: Invalid or missing token"}, status_code=401
+            )
+
+        # For HTTP endpoints, check Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            return JSONResponse(
+                {"error": "Unauthorized: Missing Authorization header"}, status_code=401
+            )
+
+        # Check Bearer token format
+        if not auth_header.startswith("Bearer "):
+            return JSONResponse(
+                {
+                    "error": "Unauthorized: Invalid Authorization format (expected 'Bearer <token>')"
+                },
+                status_code=401,
+            )
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        if token == self.settings.api_key:
+            return None  # Valid token
+
+        return JSONResponse({"error": "Unauthorized: Invalid API key"}, status_code=401)
+
+    async def _auth_wrapper(self, handler, request: Request):
+        """Wrapper to apply authentication check to endpoint handlers."""
+        auth_error = self._check_auth(request)
+        if auth_error:
+            return auth_error
+        return await handler(request)
+
     async def start_server(self):
         """Start the proxy server in stdio or SSE mode."""
         if self.settings.transport == "stdio":
@@ -91,11 +147,16 @@ class MultiMCP:
                 self.proxy.create_initialization_options(),
             )
 
-    async def start_sse_server(self) -> None:
-        """Run the proxy server over SSE transport."""
+    def create_starlette_app(self) -> Starlette:
+        """Create Starlette app with routes and optional auth middleware."""
         sse = SseServerTransport("/messages/")
 
         async def handle_sse(request):
+            # Check auth for SSE endpoint
+            auth_error = self._check_auth(request)
+            if auth_error:
+                return auth_error
+
             async with sse.connect_sse(
                 request.scope, request.receive, request._send
             ) as streams:
@@ -105,26 +166,42 @@ class MultiMCP:
                     self.proxy.create_initialization_options(),
                 )
 
+        # Wrap HTTP endpoints with auth
+        async def auth_mcp_servers(request):
+            return await self._auth_wrapper(self.handle_mcp_servers, request)
+
+        async def auth_mcp_tools(request):
+            return await self._auth_wrapper(self.handle_mcp_tools, request)
+
+        async def auth_health(request):
+            return await self._auth_wrapper(self.handle_health, request)
+
         starlette_app = Starlette(
             debug=self.settings.sse_server_debug,
             routes=[
                 Route("/sse", endpoint=handle_sse),
                 Mount("/messages/", app=sse.handle_post_message),
-                # Dynamic endpoints
+                # Dynamic endpoints with auth
                 Route(
                     "/mcp_servers",
-                    endpoint=self.handle_mcp_servers,
+                    endpoint=auth_mcp_servers,
                     methods=["GET", "POST"],
                 ),
                 Route(
                     "/mcp_servers/{name}",
-                    endpoint=self.handle_mcp_servers,
+                    endpoint=auth_mcp_servers,
                     methods=["DELETE"],
                 ),
-                Route("/mcp_tools", endpoint=self.handle_mcp_tools, methods=["GET"]),
-                Route("/health", endpoint=self.handle_health, methods=["GET"]),
+                Route("/mcp_tools", endpoint=auth_mcp_tools, methods=["GET"]),
+                Route("/health", endpoint=auth_health, methods=["GET"]),
             ],
         )
+
+        return starlette_app
+
+    async def start_sse_server(self) -> None:
+        """Run the proxy server over SSE transport."""
+        starlette_app = self.create_starlette_app()
 
         config = uvicorn.Config(
             starlette_app,
