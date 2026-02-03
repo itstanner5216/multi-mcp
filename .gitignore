@@ -23,6 +23,7 @@ coverage.xml
 
 # Logs
 *.log
+logs/
 
 # Secrets / credentials (only if created)
 .env
