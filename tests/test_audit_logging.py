@@ -11,6 +11,7 @@ import tempfile
 import shutil
 from pathlib import Path
 from datetime import datetime
+from loguru import logger
 from src.multimcp.utils.audit import AuditLogger
 
 
@@ -19,6 +20,7 @@ def temp_log_dir():
     """Create a temporary directory for audit logs."""
     temp_dir = tempfile.mkdtemp()
     yield temp_dir
+    logger.complete()
     # Cleanup after test
     shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -48,6 +50,8 @@ class TestAuditLogger:
             tool_name="test_tool", server_name="test_server", arguments={"arg": "value"}
         )
 
+        logger.complete()
+
         log_file = Path(temp_log_dir) / "audit.jsonl"
         assert log_file.exists()
 
@@ -58,6 +62,8 @@ class TestAuditLogger:
             server_name="calculator",
             arguments={"a": 5, "b": 3},
         )
+
+        logger.complete()
 
         log_file = Path(temp_log_dir) / "audit.jsonl"
         with open(log_file, "r") as f:
@@ -80,6 +86,8 @@ class TestAuditLogger:
             error="Connection timeout",
         )
 
+        logger.complete()
+
         log_file = Path(temp_log_dir) / "audit.jsonl"
         with open(log_file, "r") as f:
             line = f.readline()
@@ -94,6 +102,8 @@ class TestAuditLogger:
         audit_logger.log_tool_call("tool1", "server1", {})
         audit_logger.log_tool_call("tool2", "server2", {})
         audit_logger.log_tool_failure("tool3", "server3", {}, "Error")
+
+        logger.complete()
 
         log_file = Path(temp_log_dir) / "audit.jsonl"
         with open(log_file, "r") as f:
@@ -120,6 +130,8 @@ class TestAuditLogger:
                 arguments={"large_data": "x" * 100},
             )
 
+        logger.complete()
+
         # Check that rotated files exist
         log_files = list(Path(temp_log_dir).glob("audit*.jsonl*"))
         assert len(log_files) > 1  # Original + at least one rotated file
@@ -127,6 +139,8 @@ class TestAuditLogger:
     def test_timestamp_format_is_iso8601(self, audit_logger, temp_log_dir):
         """Test that timestamps use ISO 8601 format."""
         audit_logger.log_tool_call("test_tool", "server", {})
+
+        logger.complete()
 
         log_file = Path(temp_log_dir) / "audit.jsonl"
         with open(log_file, "r") as f:

@@ -10,6 +10,7 @@ import tempfile
 import shutil
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
+from loguru import logger
 
 from mcp import types
 from src.multimcp.mcp_proxy import MCPProxyServer, ToolMapping
@@ -26,7 +27,7 @@ def temp_log_dir():
 
 
 @pytest.fixture
-async def mock_client_manager():
+def mock_client_manager():
     """Create a mock client manager."""
     manager = Mock(spec=MCPClientManager)
     manager.clients = {}
@@ -34,7 +35,7 @@ async def mock_client_manager():
 
 
 @pytest.fixture
-async def proxy_with_audit(mock_client_manager, temp_log_dir):
+def proxy_with_audit(mock_client_manager, temp_log_dir):
     """Create a proxy with audit logging to temp directory."""
     proxy = MCPProxyServer(mock_client_manager)
     # Replace audit logger with one using temp directory
@@ -64,12 +65,15 @@ class TestAuditIntegration:
 
         # Call tool
         request = types.CallToolRequest(
+            method="tools/call",
             params=types.CallToolRequestParams(
                 name="calculator::add", arguments={"a": 5, "b": 3}
-            )
+            ),
         )
 
         await proxy_with_audit._call_tool(request)
+
+        logger.complete()
 
         # Verify audit log entry
         log_file = Path(temp_log_dir) / "audit.jsonl"
@@ -101,15 +105,18 @@ class TestAuditIntegration:
 
         # Call tool
         request = types.CallToolRequest(
+            method="tools/call",
             params=types.CallToolRequestParams(
                 name="test::broken", arguments={"arg": "value"}
-            )
+            ),
         )
 
         result = await proxy_with_audit._call_tool(request)
 
         # Verify error returned
-        assert result.isError is True
+        assert result.root.isError is True
+
+        logger.complete()
 
         # Verify audit log entry
         log_file = Path(temp_log_dir) / "audit.jsonl"
@@ -127,13 +134,16 @@ class TestAuditIntegration:
         """Test that tool not found errors are logged."""
         # Call non-existent tool
         request = types.CallToolRequest(
-            params=types.CallToolRequestParams(name="nonexistent::tool", arguments={})
+            method="tools/call",
+            params=types.CallToolRequestParams(name="nonexistent::tool", arguments={}),
         )
 
         result = await proxy_with_audit._call_tool(request)
 
         # Verify error returned
-        assert result.isError is True
+        assert result.root.isError is True
+
+        logger.complete()
 
         # Verify audit log entry
         log_file = Path(temp_log_dir) / "audit.jsonl"
