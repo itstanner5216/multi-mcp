@@ -6,6 +6,7 @@ from mcp.server.session import ServerSession
 from src.utils.logger import get_logger
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.audit import AuditLogger
+from src.multimcp.mcp_trigger_manager import MCPTriggerManager
 from dataclasses import dataclass
 
 
@@ -35,6 +36,8 @@ class MCPProxyServer(server.Server):
         self.audit_logger = AuditLogger()
         # Store active server session for sending notifications
         self._server_session: Optional[ServerSession] = None
+        # Initialize trigger manager
+        self.trigger_manager = MCPTriggerManager(client_manager)
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -154,6 +157,26 @@ class MCPProxyServer(server.Server):
         tool_name = req.params.name
         tool_item = self.tool_to_server.get(tool_name)
         arguments = req.params.arguments or {}
+
+        # Check for keyword triggers and auto-enable matching servers
+        message = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {"name": tool_name, "arguments": arguments},
+        }
+
+        enabled_servers = await self.trigger_manager.check_and_enable(message)
+
+        # If servers were enabled, register them with the proxy
+        for server_name in enabled_servers:
+            client = self.client_manager.clients.get(server_name)
+            if client:
+                await self.initialize_single_client(server_name, client)
+                self.logger.info(f"🔥 Auto-enabled server '{server_name}' via trigger")
+
+        # Re-check tool_to_server in case new tool was just enabled
+        if not tool_item:
+            tool_item = self.tool_to_server.get(tool_name)
 
         if tool_item:
             try:

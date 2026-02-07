@@ -176,6 +176,9 @@ class MultiMCP:
         async def auth_health(request):
             return await self._auth_wrapper(self.handle_health, request)
 
+        async def auth_mcp_control(request):
+            return await self._auth_wrapper(self.handle_mcp_control, request)
+
         starlette_app = Starlette(
             debug=self.settings.sse_server_debug,
             routes=[
@@ -194,6 +197,7 @@ class MultiMCP:
                 ),
                 Route("/mcp_tools", endpoint=auth_mcp_tools, methods=["GET"]),
                 Route("/health", endpoint=auth_health, methods=["GET"]),
+                Route("/mcp_control", endpoint=auth_mcp_control, methods=["POST"]),
             ],
         )
 
@@ -311,6 +315,83 @@ class MultiMCP:
                     "pending_servers": pending_count,
                 }
             )
+
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def handle_mcp_control(self, request: Request) -> JSONResponse:
+        """Handle POST /mcp_control for manual server enable/disable."""
+        try:
+            payload = await request.json()
+
+            action = payload.get("action")
+            server_name = payload.get("server")
+
+            if not action or not server_name:
+                return JSONResponse(
+                    {"error": "Missing 'action' or 'server' in payload"},
+                    status_code=400,
+                )
+
+            if action == "enable":
+                # Check if server is already active
+                if server_name in self.proxy.client_manager.clients:
+                    return JSONResponse(
+                        {"message": f"Server '{server_name}' already active"},
+                        status_code=200,
+                    )
+
+                # Check if server exists in pending configs
+                if server_name not in self.proxy.client_manager.pending_configs:
+                    return JSONResponse(
+                        {
+                            "error": f"Server '{server_name}' not found in pending configs"
+                        },
+                        status_code=404,
+                    )
+
+                # Enable the server
+                try:
+                    client = await self.proxy.client_manager.get_or_create_client(
+                        server_name
+                    )
+                    await self.proxy.register_client(server_name, client)
+
+                    return JSONResponse(
+                        {"message": f"Server '{server_name}' enabled successfully"}
+                    )
+                except Exception as e:
+                    return JSONResponse(
+                        {"error": f"Failed to enable server: {str(e)}"}, status_code=500
+                    )
+
+            elif action == "disable":
+                # Check if server is active
+                if server_name not in self.proxy.client_manager.clients:
+                    return JSONResponse(
+                        {"error": f"Server '{server_name}' not active"}, status_code=404
+                    )
+
+                # Disable (soft unload - move to pending without removing config)
+                try:
+                    # Get the server config before unregistering
+                    # For now, we'll just unregister. Full disable logic would store config
+                    await self.proxy.unregister_client(server_name)
+
+                    return JSONResponse(
+                        {"message": f"Server '{server_name}' disabled successfully"}
+                    )
+                except Exception as e:
+                    return JSONResponse(
+                        {"error": f"Failed to disable server: {str(e)}"},
+                        status_code=500,
+                    )
+
+            else:
+                return JSONResponse(
+                    {"error": f"Invalid action: {action}. Use 'enable' or 'disable'"},
+                    status_code=400,
+                )
 
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
