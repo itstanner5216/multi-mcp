@@ -54,6 +54,27 @@ uv run main.py --transport sse
 
 **Note:** You can also configure the host and port using `--host` / `--port` arguments.
 
+### 3. Production Mode (with External MCP Servers)
+
+For production deployments with external MCP servers (GitHub, Brave Search, Context7), use the included startup script:
+
+```bash
+# Set required environment variables
+export GITHUB_PERSONAL_ACCESS_TOKEN="your-token-here"
+export BRAVE_API_KEY="your-api-key-here"
+export MULTI_MCP_API_KEY="your-secret-key"  # Optional, for authentication
+
+# Run the startup script
+./start-server.sh
+```
+
+The production configuration is stored in `msc/mcp.json` (git-ignored for security). This configuration includes:
+- **GitHub MCP Server**: Repository management, issues, pull requests
+- **Brave Search MCP Server**: Web search capabilities
+- **Context7 MCP Server**: Library documentation and code examples
+
+All servers use environment variable interpolation for secrets (e.g., `${GITHUB_PERSONAL_ACCESS_TOKEN}`).
+
 ## ⚙️ Configuration
 
 The proxy is initialized using a JSON config (default: `./mcp.json`):
