@@ -31,3 +31,6 @@ logs/
 
 # ignore anything in msc directory recursively
 msc/**
+
+# Local Hive execution artifacts
+.hive/
