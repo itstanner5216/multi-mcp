@@ -1,3 +1,4 @@
+import asyncio
 import os
 import uvicorn
 import json
@@ -83,9 +84,11 @@ class MultiMCP:
 
         for name, srv in json_servers.items():
             valid_fields = ServerConfig.model_fields.keys()
-            config.servers[name] = ServerConfig(**{
-                k: v for k, v in srv.items() if k in valid_fields
-            })
+            filtered = {k: v for k, v in srv.items() if k in valid_fields}
+            ignored = set(srv.keys()) - set(filtered.keys())
+            if ignored:
+                self.logger.warning(f"⚠️ '{name}': ignoring unknown config keys: {ignored}")
+            config.servers[name] = ServerConfig(**filtered)
 
         discovered = await self.client_manager.discover_all(config)
         for server_name, tools in discovered.items():
@@ -100,24 +103,27 @@ class MultiMCP:
         self.logger.info(
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
+        await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+
         config = self.load_mcp_config(path=self.settings.config)
         if not config:
             self.logger.error("❌ Failed to load MCP config.")
             return
-        clients_manager = MCPClientManager()
-        clients = await clients_manager.create_clients(config)
+        clients = await self.client_manager.create_clients(config)
         if not clients:
             self.logger.error("❌ No valid clients were created.")
             return
 
         self.logger.info(f"✅ Connected clients: {list(clients.keys())}")
 
+        asyncio.create_task(self.client_manager.start_idle_checker())
+
         try:
-            self.proxy = await MCPProxyServer.create(clients_manager)
+            self.proxy = await MCPProxyServer.create(self.client_manager)
 
             await self.start_server()
         finally:
-            await clients_manager.close()
+            await self.client_manager.close()
 
     def load_mcp_config(self, path="./mcp.json"):
         """Loads MCP JSON configuration From File."""
