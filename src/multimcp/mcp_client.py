@@ -84,6 +84,7 @@ class MCPClientManager:
         """
         # Return existing client if already connected
         if name in self.clients:
+            self.record_usage(name)
             return self.clients[name]
 
         # Create from pending config if available
@@ -98,6 +99,7 @@ class MCPClientManager:
                 except asyncio.TimeoutError:
                     self.logger.error(f"❌ Connection timeout for {name}")
                     raise
+            self.record_usage(name)
             return self.clients[name]
 
         raise KeyError(f"Unknown server: {name}")
