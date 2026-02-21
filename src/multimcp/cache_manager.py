@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Set
+from typing import List, Set
 from mcp import types
 from src.multimcp.yaml_config import MultiMCPConfig, ToolEntry
 
@@ -7,7 +7,7 @@ from src.multimcp.yaml_config import MultiMCPConfig, ToolEntry
 def merge_discovered_tools(
     config: MultiMCPConfig,
     server_name: str,
-    discovered: list[types.Tool],
+    discovered: List[types.Tool],
 ) -> MultiMCPConfig:
     """Merge newly discovered tools into existing config.
 
@@ -16,7 +16,9 @@ def merge_discovered_tools(
     - Existing tool: preserve enabled, update description, clear stale
     - Tool gone from server: mark stale=True, preserve enabled
     """
-    server = config.servers[server_name]
+    server = config.servers.get(server_name)
+    if server is None:
+        return config
     discovered_names = {t.name for t in discovered}
 
     # Mark gone tools as stale

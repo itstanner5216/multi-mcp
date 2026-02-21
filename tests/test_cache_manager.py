@@ -45,6 +45,7 @@ def test_description_updated_on_refresh():
     discovered = [_make_tool("search_repositories", "new description")]
     result = merge_discovered_tools(config, "github", discovered)
     assert result.servers["github"].tools["search_repositories"].description == "new description"
+    assert result.servers["github"].tools["search_repositories"].enabled is True
 
 def test_get_enabled_tools_filters_disabled_and_stale():
     config = MultiMCPConfig(servers={
