@@ -2,6 +2,7 @@ from contextlib import AsyncExitStack
 from typing import Dict, Optional
 import os
 import asyncio
+import time
 
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -32,6 +33,9 @@ class MCPClientManager:
         self._connection_semaphore = asyncio.Semaphore(max_concurrent_connections)
         self._connection_timeout = connection_timeout
         self.logger = get_logger("multi_mcp.ClientManager")
+        self.always_on_servers: set[str] = set()
+        self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
+        self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
@@ -171,6 +175,35 @@ class MCPClientManager:
                 results[name] = []
 
         return results
+
+    def record_usage(self, server_name: str) -> None:
+        """Update last-used timestamp for a server."""
+        self.last_used[server_name] = time.monotonic()
+
+    async def _disconnect_idle_servers(self) -> None:
+        """Disconnect lazy servers that have exceeded their idle timeout."""
+        now = time.monotonic()
+        to_disconnect = [
+            name for name in list(self.clients.keys())
+            if name not in self.always_on_servers
+            and now - self.last_used.get(name, 0) > self.idle_timeouts.get(name, 300)
+        ]
+        for name in to_disconnect:
+            self.logger.info(f"💤 Disconnecting idle server: {name}")
+            del self.clients[name]
+            # Close the server stack if it exists
+            stack = self.server_stacks.pop(name, None)
+            if stack:
+                try:
+                    await stack.aclose()
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
+
+    async def start_idle_checker(self, interval_seconds: float = 60.0) -> None:
+        """Background task: periodically disconnect idle lazy servers."""
+        while True:
+            await asyncio.sleep(interval_seconds)
+            await self._disconnect_idle_servers()
 
     async def _create_single_client(self, name: str, server: dict) -> None:
         """
