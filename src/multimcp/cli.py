@@ -25,7 +25,9 @@ def cmd_list(
             continue
         enabled_count = sum(1 for t in server_config.tools.values() if t.enabled and not t.stale)
         total = len(server_config.tools)
-        lines.append(f"\n[{server_name}] ({enabled_count}/{total} tools enabled)")
+        if lines:
+            lines.append("")
+        lines.append(f"[{server_name}] ({enabled_count}/{total} tools enabled)")
         for tool_name, entry in sorted(server_config.tools.items()):
             if disabled_only and entry.enabled and not entry.stale:
                 continue
@@ -50,9 +52,9 @@ def cmd_status(yaml_path: Path = DEFAULT_YAML) -> str:
 
     lines = ["Multi-MCP Status", "=" * 40]
     for server_name, server_config in config.servers.items():
-        enabled = sum(1 for t in server_config.tools.values() if t.enabled and not t.stale)
-        disabled = sum(1 for t in server_config.tools.values() if not t.enabled)
         stale = sum(1 for t in server_config.tools.values() if t.stale)
+        enabled = sum(1 for t in server_config.tools.values() if t.enabled and not t.stale)
+        disabled = sum(1 for t in server_config.tools.values() if not t.enabled and not t.stale)
         mode = "always_on" if server_config.always_on else f"lazy ({server_config.idle_timeout_minutes}m timeout)"
         lines.append(f"\n{server_name}")
         lines.append(f"  Mode:     {mode}")
@@ -90,6 +92,11 @@ async def cmd_refresh(
     for name, tools in discovered.items():
         merge_discovered_tools(config, name, tools)
 
+    zero_tool_servers = [name for name, tools in discovered.items() if not tools]
+
     save_config(config, yaml_path)
     total_tools = sum(len(t) for t in discovered.values())
-    return f"Refreshed {len(discovered)} server(s), {total_tools} tools discovered. Saved to {yaml_path}"
+    warning = ""
+    if zero_tool_servers:
+        warning = f"\n⚠️  0 tools discovered for: {', '.join(zero_tool_servers)} — check server config"
+    return f"✅ Refreshed {len(discovered)} server(s), {total_tools} tools discovered. Saved to {yaml_path}{warning}"
