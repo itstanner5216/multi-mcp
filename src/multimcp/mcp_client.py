@@ -3,6 +3,7 @@ from typing import Dict, Optional
 import os
 import asyncio
 
+
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
@@ -26,9 +27,30 @@ class MCPClientManager:
         self.stack = AsyncExitStack()
         self.clients: Dict[str, ClientSession] = {}
         self.pending_configs: Dict[str, dict] = {}
+        self.tool_filters: Dict[str, Optional[dict]] = {}
         self._connection_semaphore = asyncio.Semaphore(max_concurrent_connections)
         self._connection_timeout = connection_timeout
         self.logger = get_logger("multi_mcp.ClientManager")
+
+    def _parse_tool_filter(self, config: dict) -> Optional[dict]:
+        """Normalize the 'tools' field from a server config into {allow, deny} format.
+
+        Supports:
+          "tools": ["tool_a", "tool_b"]          -> allow list shorthand
+          "tools": {"allow": [...], "deny": [...]} -> full format
+          absent / null                            -> no filtering (all tools allowed)
+        """
+        tools = config.get("tools")
+        if tools is None:
+            return None
+        if isinstance(tools, list):
+            return {"allow": tools, "deny": []}
+        if isinstance(tools, dict):
+            return {
+                "allow": tools.get("allow", ["*"]),
+                "deny": tools.get("deny", []),
+            }
+        return None
 
     def add_pending_server(self, name: str, config: dict) -> None:
         """
@@ -38,6 +60,7 @@ class MCPClientManager:
             name (str): Server name
             config (dict): Server configuration (command/url, args, env, etc.)
         """
+        self.tool_filters[name] = self._parse_tool_filter(config)
         self.pending_configs[name] = config
         self.logger.info(f"📋 Added pending server: {name}")
 
@@ -73,6 +96,58 @@ class MCPClientManager:
             return self.clients[name]
 
         raise KeyError(f"Unknown server: {name}")
+
+    async def discover_all(
+        self, config: "MultiMCPConfig"
+    ) -> dict[str, list]:
+        """Connect to every server, fetch tool lists, disconnect lazy ones.
+
+        Returns:
+            Dict mapping server_name -> list[types.Tool]
+        """
+        from mcp import types as mcp_types
+
+        if not hasattr(self.stack, "_exit_callbacks"):
+            await self.stack.__aenter__()
+
+        results: dict[str, list] = {}
+
+        for name, server_config in config.servers.items():
+            try:
+                server_dict = server_config.model_dump(exclude_none=True)
+                await asyncio.wait_for(
+                    self._create_single_client(name, server_dict),
+                    timeout=self._connection_timeout,
+                )
+                client = self.clients.get(name)
+                if not client:
+                    results[name] = []
+                    continue
+
+                init_result = await client.initialize()
+                tools = []
+                if init_result.capabilities.tools:
+                    tools_result = await client.list_tools()
+                    tools = tools_result.tools
+
+                results[name] = tools
+
+                # Disconnect lazy servers immediately after discovery
+                if not server_config.always_on:
+                    del self.clients[name]
+                    self.logger.info(
+                        f"Discovered {len(tools)} tools from '{name}', disconnected (lazy)"
+                    )
+                else:
+                    self.logger.info(
+                        f"Discovered {len(tools)} tools from '{name}', staying connected (always_on)"
+                    )
+
+            except Exception as e:
+                self.logger.error(f"Discovery failed for '{name}': {e}")
+                results[name] = []
+
+        return results
 
     async def _create_single_client(self, name: str, server: dict) -> None:
         """
@@ -157,6 +232,7 @@ class MCPClientManager:
         await self.stack.__aenter__()  # manually enter the stack once
 
         for name, server in config.get("mcpServers", {}).items():
+            self.tool_filters[name] = self._parse_tool_filter(server)
             if name in self.clients:
                 self.logger.warning(
                     f"⚠️ Client '{name}' already exists and will be overridden."
