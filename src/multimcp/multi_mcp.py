@@ -1,6 +1,7 @@
 import os
 import uvicorn
 import json
+from pathlib import Path
 from typing import Literal, Any, Optional
 from pydantic_settings import BaseSettings
 
@@ -14,7 +15,11 @@ from mcp.server.sse import SseServerTransport
 
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.mcp_proxy import MCPProxyServer
+from src.multimcp.yaml_config import load_config, save_config, MultiMCPConfig, ServerConfig
+from src.multimcp.cache_manager import merge_discovered_tools, get_enabled_tools
 from src.utils.logger import configure_logging, get_logger
+
+YAML_CONFIG_PATH = Path.home() / ".config" / "multi-mcp" / "servers.yaml"
 
 
 class MCPSettings(BaseSettings):
@@ -38,11 +43,57 @@ class MultiMCP:
         configure_logging(level=self.settings.log_level)
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
+        self.client_manager = MCPClientManager()
 
     @property
     def auth_enabled(self) -> bool:
         """Check if API key authentication is enabled."""
         return self.settings.api_key is not None and len(self.settings.api_key) > 0
+
+    async def _bootstrap_from_yaml(self, yaml_path: Path) -> MultiMCPConfig:
+        """Load YAML config or run first-time discovery. Apply settings to client_manager."""
+        config = load_config(yaml_path)
+
+        if not config.servers:
+            self.logger.info("No YAML config found — running first-time discovery...")
+            config = await self._first_run_discovery(yaml_path)
+        else:
+            self.logger.info(f"Loaded config from {yaml_path}")
+
+        # Apply tool filters, idle timeouts, and always_on settings
+        for server_name, server_config in config.servers.items():
+            enabled = get_enabled_tools(config, server_name)
+            if enabled:
+                self.client_manager.tool_filters[server_name] = {
+                    "allow": list(enabled), "deny": []
+                }
+            self.client_manager.idle_timeouts[server_name] = (
+                server_config.idle_timeout_minutes * 60
+            )
+            if server_config.always_on:
+                self.client_manager.always_on_servers.add(server_name)
+
+        return config
+
+    async def _first_run_discovery(self, yaml_path: Path) -> MultiMCPConfig:
+        """Connect to all servers from JSON config, discover tools, write YAML."""
+        config = MultiMCPConfig()
+        json_config = self.load_mcp_config(path=self.settings.config) or {}
+        json_servers = json_config.get("mcpServers", {})
+
+        for name, srv in json_servers.items():
+            valid_fields = ServerConfig.model_fields.keys()
+            config.servers[name] = ServerConfig(**{
+                k: v for k, v in srv.items() if k in valid_fields
+            })
+
+        discovered = await self.client_manager.discover_all(config)
+        for server_name, tools in discovered.items():
+            merge_discovered_tools(config, server_name, tools)
+
+        save_config(config, yaml_path)
+        self.logger.info(f"Wrote initial config to {yaml_path}")
+        return config
 
     async def run(self):
         """Entry point to run the MultiMCP server: loads config, initializes clients, starts server."""
