@@ -1,5 +1,5 @@
 from contextlib import AsyncExitStack
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import os
 import asyncio
 import time
@@ -33,7 +33,7 @@ class MCPClientManager:
         self._connection_semaphore = asyncio.Semaphore(max_concurrent_connections)
         self._connection_timeout = connection_timeout
         self.logger = get_logger("multi_mcp.ClientManager")
-        self.always_on_servers: set[str] = set()
+        self.always_on_servers: Set[str] = set()
         self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
         self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
 
@@ -186,7 +186,8 @@ class MCPClientManager:
         to_disconnect = [
             name for name in list(self.clients.keys())
             if name not in self.always_on_servers
-            and now - self.last_used.get(name, 0) > self.idle_timeouts.get(name, 300)
+            and name in self.idle_timeouts
+            and now - self.last_used.get(name, 0) > self.idle_timeouts[name]
         ]
         for name in to_disconnect:
             self.logger.info(f"💤 Disconnecting idle server: {name}")

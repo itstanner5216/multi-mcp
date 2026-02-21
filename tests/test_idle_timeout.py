@@ -16,7 +16,9 @@ async def test_record_usage_updates_timestamp():
 async def test_idle_servers_are_disconnected():
     manager = MCPClientManager()
     mock_session = AsyncMock()
+    mock_stack = AsyncMock()
     manager.clients["tavily"] = mock_session
+    manager.server_stacks["tavily"] = mock_stack
     manager.always_on_servers = set()
     manager.idle_timeouts["tavily"] = 0.01  # 10ms timeout for test
     manager.last_used["tavily"] = time.monotonic() - 1.0  # 1 second ago
@@ -24,6 +26,8 @@ async def test_idle_servers_are_disconnected():
     await manager._disconnect_idle_servers()
 
     assert "tavily" not in manager.clients
+    assert "tavily" not in manager.server_stacks
+    mock_stack.aclose.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_always_on_servers_not_disconnected():
