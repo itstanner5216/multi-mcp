@@ -26,6 +26,7 @@ class MCPClientManager:
     ):
         self.stack = AsyncExitStack()
         self.clients: Dict[str, ClientSession] = {}
+        self.server_stacks: Dict[str, AsyncExitStack] = {}
         self.pending_configs: Dict[str, dict] = {}
         self.tool_filters: Dict[str, Optional[dict]] = {}
         self._connection_semaphore = asyncio.Semaphore(max_concurrent_connections)
@@ -99,30 +100,45 @@ class MCPClientManager:
 
     async def discover_all(
         self, config: "MultiMCPConfig"
-    ) -> dict[str, list]:
+    ) -> Dict[str, list]:
         """Connect to every server, fetch tool lists, disconnect lazy ones.
+
+        Uses per-server AsyncExitStack so lazy servers can be properly closed
+        (not just removed from the clients dict).
 
         Returns:
             Dict mapping server_name -> list[types.Tool]
         """
-        from mcp import types as mcp_types
-
-        if not hasattr(self.stack, "_exit_callbacks"):
-            await self.stack.__aenter__()
-
-        results: dict[str, list] = {}
+        results: Dict[str, list] = {}
 
         for name, server_config in config.servers.items():
+            server_stack = AsyncExitStack()
             try:
+                await server_stack.__aenter__()
                 server_dict = server_config.model_dump(exclude_none=True)
-                await asyncio.wait_for(
-                    self._create_single_client(name, server_dict),
-                    timeout=self._connection_timeout,
-                )
-                client = self.clients.get(name)
-                if not client:
+
+                command = server_dict.get("command")
+                url = server_dict.get("url")
+                args = server_dict.get("args", [])
+                env = server_dict.get("env", {})
+                merged_env = os.environ.copy()
+                merged_env.update(env)
+
+                if command:
+                    from mcp.client.stdio import StdioServerParameters, stdio_client
+                    params = StdioServerParameters(command=command, args=args, env=merged_env)
+                    read, write = await server_stack.enter_async_context(stdio_client(params))
+                elif url:
+                    from mcp.client.sse import sse_client
+                    read, write = await server_stack.enter_async_context(sse_client(url=url))
+                else:
+                    self.logger.warning(f"⚠️ Skipping '{name}': no command or URL")
+                    await server_stack.aclose()
                     results[name] = []
                     continue
+
+                from mcp.client.session import ClientSession
+                client = await server_stack.enter_async_context(ClientSession(read, write))
 
                 init_result = await client.initialize()
                 tools = []
@@ -132,19 +148,26 @@ class MCPClientManager:
 
                 results[name] = tools
 
-                # Disconnect lazy servers immediately after discovery
                 if not server_config.always_on:
-                    del self.clients[name]
+                    # Properly close the connection — subprocess terminated, socket closed
+                    await server_stack.aclose()
                     self.logger.info(
-                        f"Discovered {len(tools)} tools from '{name}', disconnected (lazy)"
+                        f"🔌 Discovered {len(tools)} tools from '{name}', disconnected (lazy)"
                     )
                 else:
+                    # Keep always_on server alive — store stack and client
+                    self.server_stacks[name] = server_stack
+                    self.clients[name] = client
                     self.logger.info(
-                        f"Discovered {len(tools)} tools from '{name}', staying connected (always_on)"
+                        f"✅ Discovered {len(tools)} tools from '{name}', staying connected (always_on)"
                     )
 
             except Exception as e:
-                self.logger.error(f"Discovery failed for '{name}': {e}")
+                self.logger.error(f"❌ Discovery failed for '{name}': {e}")
+                try:
+                    await server_stack.aclose()
+                except Exception:
+                    pass
                 results[name] = []
 
         return results
