@@ -1,22 +1,25 @@
-# Multi-MCP Redesign Design Doc
+# Multi-MCP Proxy Redesign
 **Date:** 2026-02-21
-**Status:** In Progress — pending lazy loading research review
+**Status:** Design Approved — ready for implementation
+**Scope:** Proxy only. Semantic router is a separate future project.
 
 ---
 
 ## Goal
 
-Make multi-mcp a production-ready, system-wide MCP proxy that:
-- Lazily loads backend servers (connect only when needed)
-- Exposes a single endpoint to all AI tools (Claude Code, Codex, OpenCode, Antigravity, Copilot)
-- Lets the user control exactly which tools are visible with zero friction
+A system-wide MCP proxy that is genuinely better than anything currently on GitHub:
+- Single endpoint for all AI tools (Claude Code, Codex, OpenCode, Antigravity, Copilot)
+- Lazily loads backend servers — connects only when a tool is actually called
+- Tool-level enable/disable with zero friction — edit one YAML file
 - Works out of the box with no configuration required
+- Fast: subsequent startups are instant (local YAML read, no network)
 
----
-
-## Approach
-
-Extend the existing multi-mcp codebase (Python). The proxy core, lazy loading primitives, tool filtering, and HTTP API are already solid. The remaining work is the unified YAML file, smart refresh logic, startup discovery-with-disconnect, and a handful of CLI commands.
+What makes it better than existing solutions (metamcp, tbxark/mcp-proxy, etc.):
+- Unified YAML file that is simultaneously cache, config, and control plane — novel
+- Smart refresh that never overwrites user settings
+- Startup discovery-with-disconnect — all tools visible immediately, nothing running
+- Tool-level filtering already implemented in proxy core
+- No GUI required, no Docker required, no manual tool declaration required
 
 ---
 
@@ -24,134 +27,172 @@ Extend the existing multi-mcp codebase (Python). The proxy core, lazy loading pr
 
 **Location:** `~/.config/multi-mcp/servers.yaml`
 
-This single file serves as cache, config, and tool control simultaneously. It is the only file the user ever needs to touch.
+One file. Cache, config, and tool control simultaneously. The only file the user ever touches.
 
-### Schema
+### Full Schema
 
 ```yaml
 servers:
   github:
     command: /home/tanner/mcp-servers/run-github.sh
-    always_on: true                  # stays connected at all times
+    always_on: true
     tools:
       search_repositories:
         enabled: true
       create_gist:
-        enabled: false               # user disabled this
+        enabled: false
       delete_repository:
         enabled: false
-      # ... rest of 26 tools
+      # ... remaining tools auto-populated on first run
 
   exa:
     type: sse
-    url: https://mcp.exa.ai/mcp?tools=...
-    always_on: false                 # lazy: connect on first tool call
+    url: https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa,company_research_exa,crawling_exa,deep_researcher_start,deep_researcher_check
+    always_on: false
     tools:
-      web_search_exa:
-        enabled: true
-      linkedin_search_exa:
-        enabled: false
-      # ... rest
+      # auto-populated on first run, all enabled: true by default
 
   obsidian:
     command: /home/tanner/mcp-servers/run-obsidian.sh
     always_on: true
     tools:
-      read_note:
-        enabled: true
-      # ...
+      # auto-populated on first run
 
   tavily:
     command: /home/tanner/mcp-servers/run-tavily.sh
     always_on: false
     tools:
-      # all enabled: true by default
+      # auto-populated on first run
 
   sequential-thinking:
     command: npx -y @modelcontextprotocol/server-sequential-thinking
     always_on: false
     tools:
-      sequentialthinking:
-        enabled: true
+      # auto-populated on first run
 
   context7:
     command: npx -y @upstash/context7-mcp
     always_on: false
     tools:
-      resolve-library-id:
-        enabled: true
-      get-library-docs:
-        enabled: true
+      # auto-populated on first run
 ```
 
 ### Tool Control Rules
 
 | Scenario | Behavior |
 |----------|----------|
-| No `tools` key configured | All tools pass through (default) |
-| Tool present, `enabled: true` | Exposed to AI |
-| Tool present, `enabled: false` | Hidden from AI, backend still runs if connected |
-| Tool not in YAML but discovered on refresh | Added with `enabled: true` |
-| Tool in YAML but no longer on server | Marked `stale: true`, user setting preserved |
+| No `tools` key for server | All tools pass through |
+| `enabled: true` | Exposed to AI |
+| `enabled: false` | Hidden from AI, user setting never overwritten by refresh |
+| New tool discovered on refresh | Added as `enabled: true` |
+| Tool gone from server on refresh | Marked `stale: true`, setting preserved |
+| `stale: true` + `enabled: false` | Cleaned up on next refresh if still absent |
 
 ---
 
 ## Startup Behavior
 
-### First Run (empty or missing cache)
-1. Connect to each server briefly
-2. Fetch full tool list
-3. Write `servers.yaml` with all tools set to `enabled: true`
-4. Disconnect lazy servers, keep always-on servers connected
-5. Serve tool list to AI clients immediately
+### First Run (no YAML exists)
+1. Connect to each configured server
+2. Fetch full tool list from each
+3. Write `servers.yaml` — all tools set `enabled: true`
+4. Disconnect lazy servers (always_on: false)
+5. Keep always_on servers connected
+6. Serve tool list to AI clients — ready
 
 ### Subsequent Startups
-1. Read `servers.yaml` — instant, no network calls
-2. Connect always-on servers
-3. Lazy servers: advertise tools from cache, do not connect
-4. Ready
+1. Read `servers.yaml` — instant, zero network calls
+2. Connect always_on servers
+3. Lazy servers: serve tool metadata from cache, do not connect
+4. Ready — fast as a config file read
 
 ### Manual Refresh
 ```bash
-multi-mcp refresh           # re-discover all servers, smart merge
-multi-mcp refresh github    # re-discover one server only
+multi-mcp refresh              # re-discover all servers, smart merge
+multi-mcp refresh github       # re-discover one server only
 ```
 
-**Smart merge rules:**
-- New tool discovered → add with `enabled: true`
-- Existing tool → preserve `enabled` status, update metadata only
-- Tool gone from server → set `stale: true`, preserve `enabled` status
-- Never overwrites user-set values
+**Smart merge rules (refresh never touches user settings):**
+- New tool found → add with `enabled: true`
+- Existing tool → preserve `enabled` value, update description/schema only
+- Tool gone from server → add `stale: true`, preserve `enabled` value
+- `always_on` and server-level settings → never modified by refresh
 
 ---
 
-## Lazy Loading Behavior
+## Lazy Loading
 
 ```
 Startup:
-  → connect all servers briefly (tool discovery)
-  → cache to servers.yaml
-  → disconnect lazy servers
-  → keep always_on servers connected
+  For each server:
+    connect → fetch tool list → write to YAML → disconnect (if not always_on)
 
 Runtime (lazy server):
-  AI calls tool → proxy reconnects server → executes → ...
-  [idle timeout TBD — see lazy loading research review]
-  → optionally disconnect after idle
+  AI calls tool
+    → proxy reconnects server
+    → executes call
+    → idle timeout starts
+    → auto-disconnect after N minutes idle (configurable, default: 5 min)
+
+Runtime (always_on server):
+  Connected permanently, reconnects automatically on failure
 ```
 
-The key design insight: tool metadata is served from the YAML cache at startup, so all tools are visible to the AI immediately without any server being connected. The backend only starts when a tool is actually invoked.
+Key design: tool metadata is served from YAML cache at startup so all tools are visible to the AI immediately. No server needs to be connected for its tools to appear. The backend only starts when a tool is actually called.
 
 ---
 
-## CLI Commands
+## CLI
 
 ```bash
-multi-mcp start             # start the proxy (stdio or SSE mode)
-multi-mcp refresh [server]  # re-discover tools, smart merge into YAML
-multi-mcp status            # show connected servers, tool counts
-multi-mcp list              # list all tools across all servers (exposed/filtered/stale)
+# Start the proxy
+multi-mcp start                          # stdio mode (default)
+multi-mcp start --transport sse          # SSE mode on default port
+multi-mcp start --transport sse --port 8085
+
+# Tool discovery
+multi-mcp refresh                        # re-discover all, smart merge
+multi-mcp refresh <server>               # re-discover one server
+
+# Visibility
+multi-mcp status                         # connected servers, uptime, tool counts
+multi-mcp list                           # all tools: server, name, enabled/disabled/stale
+multi-mcp list --server github           # tools for one server only
+multi-mcp list --disabled                # only filtered-out tools
 ```
+
+---
+
+## Config for Each AI Tool
+
+Once multi-mcp is running, every tool points at it instead of individual servers.
+
+**stdio mode** (simplest — one entry per tool):
+```json
+{
+  "mcpServers": {
+    "multi-mcp": {
+      "type": "stdio",
+      "command": "multi-mcp",
+      "args": ["start"]
+    }
+  }
+}
+```
+
+**SSE mode** (if running as a background service):
+```json
+{
+  "mcpServers": {
+    "multi-mcp": {
+      "type": "sse",
+      "url": "http://localhost:8085/sse"
+    }
+  }
+}
+```
+
+This replaces all individual server entries in Claude Code, Codex, OpenCode, Antigravity, and Copilot configs.
 
 ---
 
@@ -159,30 +200,36 @@ multi-mcp list              # list all tools across all servers (exposed/filtere
 
 | Feature | Status |
 |---------|--------|
-| Core proxy (request routing, namespacing) | ✅ Done |
+| Core proxy — request routing, namespacing | ✅ Done |
 | Lazy loading via `pending_configs` | ✅ Done |
-| Tool filtering (`allow`/`deny` per server) | ✅ Done (added today) |
-| Dynamic add/remove via HTTP API | ✅ Done |
+| Tool filtering — allow/deny per server | ✅ Done |
+| Dynamic server add/remove via HTTP API | ✅ Done |
 | SSE + stdio transport | ✅ Done |
-| Startup discovery-with-disconnect | ❌ Needed |
-| Unified YAML cache/config | ❌ Needed |
-| Smart refresh (preserve user settings) | ❌ Needed |
-| Idle timeout auto-disconnect | ⏳ Pending lazy loading research |
-| CLI commands | ❌ Needed |
+| Audit logging | ✅ Done |
+| API key auth | ✅ Done |
+| Keyword trigger system | ✅ Done (may be superseded) |
+
+## What Needs Building
+
+| Feature | Priority |
+|---------|----------|
+| Startup discovery-with-disconnect | P0 |
+| Unified YAML cache/config | P0 |
+| Smart refresh with merge logic | P0 |
+| `always_on` vs lazy per server | P0 |
+| Idle timeout auto-disconnect | P0 |
+| `multi-mcp` CLI entry point | P0 |
+| `multi-mcp list` / `status` commands | P1 |
+| Stale tool cleanup | P1 |
+| Auto-reconnect on always_on failure | P1 |
+| Update all AI tool configs to point at multi-mcp | P1 |
 
 ---
 
-## Open Questions
+## Out of Scope (This Project)
 
-1. **Lazy loading research** — User has research to review before finalizing idle timeout behavior and whether additional lazy loading patterns are worth implementing. See next section.
-2. **Idle timeout** — Should lazy servers auto-disconnect after N minutes of inactivity, or stay connected once woken?
-3. **System-wide config propagation** — After multi-mcp is set up, all tool configs (Claude Code, Codex, OpenCode, Antigravity, Copilot) need to be updated to point at the single multi-mcp endpoint.
-
----
-
-## Out of Scope
-
-- TUI — YAML is simple enough to edit directly
-- Keyword-triggered wakeup — startup discovery-with-disconnect solves the visibility problem more cleanly
-- Web UI
-- Kubernetes/Docker deployment changes
+- TUI — YAML is sufficient
+- Semantic router / vault indexing — separate future project
+- Embedding-based tool routing — separate future project
+- Kubernetes / Docker deployment
+- Multi-user / multi-tenant support
