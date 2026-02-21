@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 import yaml
 from pydantic import BaseModel, Field
 
@@ -14,16 +14,16 @@ class ToolEntry(BaseModel):
 class ServerConfig(BaseModel):
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
-    env: Dict[str, str] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
     url: Optional[str] = None
     type: str = "stdio"
     always_on: bool = False
     idle_timeout_minutes: int = 5
-    tools: Dict[str, ToolEntry] = Field(default_factory=dict)
+    tools: dict[str, ToolEntry] = Field(default_factory=dict)
 
 
 class MultiMCPConfig(BaseModel):
-    servers: Dict[str, ServerConfig] = Field(default_factory=dict)
+    servers: dict[str, ServerConfig] = Field(default_factory=dict)
 
 
 def load_config(path: Path) -> MultiMCPConfig:

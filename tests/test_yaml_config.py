@@ -1,6 +1,5 @@
 import pytest
 import yaml
-import tempfile
 from pathlib import Path
 from src.multimcp.yaml_config import ToolEntry, ServerConfig, MultiMCPConfig, load_config, save_config
 
@@ -16,7 +15,7 @@ def test_server_config_defaults():
     assert s.idle_timeout_minutes == 5
     assert s.tools == {}
 
-def test_load_config_from_yaml():
+def test_load_config_from_yaml(tmp_path):
     content = """
 servers:
   github:
@@ -28,17 +27,15 @@ servers:
       create_gist:
         enabled: false
 """
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-        f.write(content)
-        path = Path(f.name)
-
+    path = tmp_path / "config.yaml"
+    path.write_text(content)
     config = load_config(path)
     assert "github" in config.servers
     assert config.servers["github"].always_on is True
     assert config.servers["github"].tools["search_repositories"].enabled is True
     assert config.servers["github"].tools["create_gist"].enabled is False
 
-def test_save_and_reload_config():
+def test_save_and_reload_config(tmp_path):
     config = MultiMCPConfig(servers={
         "exa": ServerConfig(
             url="https://mcp.exa.ai/mcp",
@@ -46,9 +43,7 @@ def test_save_and_reload_config():
             tools={"web_search_exa": ToolEntry(enabled=True, description="Search the web")}
         )
     })
-    with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
-        path = Path(f.name)
-
+    path = tmp_path / "config.yaml"
     save_config(config, path)
     reloaded = load_config(path)
     assert reloaded.servers["exa"].tools["web_search_exa"].enabled is True
