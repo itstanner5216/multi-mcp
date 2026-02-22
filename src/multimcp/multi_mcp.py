@@ -118,6 +118,14 @@ class MultiMCP:
         # Start idle checker background task
         asyncio.create_task(self.client_manager.start_idle_checker())
 
+        # Build config dict for watchdog reconnects
+        always_on_configs = {
+            name: srv.model_dump(exclude_none=True)
+            for name, srv in yaml_config.servers.items()
+            if srv.always_on
+        }
+        asyncio.create_task(self.client_manager.start_always_on_watchdog(always_on_configs))
+
         try:
             self.proxy = await MCPProxyServer.create(self.client_manager)
 

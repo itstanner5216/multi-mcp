@@ -205,6 +205,49 @@ class MCPClientManager:
             await asyncio.sleep(interval_seconds)
             await self._disconnect_idle_servers()
 
+    async def start_always_on_watchdog(
+        self, configs: Dict[str, dict], interval_seconds: float = 30.0
+    ) -> None:
+        """Background task: reconnect always_on servers if their connection drops."""
+        while True:
+            await asyncio.sleep(interval_seconds)
+            for name in list(self.always_on_servers):
+                if name not in self.clients:
+                    self.logger.warning(f"⚠️ Always-on server '{name}' disconnected — reconnecting...")
+                    server_config = configs.get(name)
+                    if not server_config:
+                        continue
+                    try:
+                        server_stack = AsyncExitStack()
+                        await server_stack.__aenter__()
+                        command = server_config.get("command")
+                        url = server_config.get("url")
+                        args = server_config.get("args", [])
+                        env = server_config.get("env", {})
+                        merged_env = os.environ.copy()
+                        merged_env.update(env)
+
+                        if command:
+                            params = StdioServerParameters(command=command, args=args, env=merged_env)
+                            read, write = await server_stack.enter_async_context(stdio_client(params))
+                        elif url:
+                            read, write = await server_stack.enter_async_context(sse_client(url=url))
+                        else:
+                            await server_stack.aclose()
+                            continue
+
+                        client = await server_stack.enter_async_context(ClientSession(read, write))
+                        await client.initialize()
+                        self.clients[name] = client
+                        self.server_stacks[name] = server_stack
+                        self.logger.info(f"✅ Reconnected always-on server '{name}'")
+                    except Exception as e:
+                        self.logger.error(f"❌ Failed to reconnect '{name}': {e}")
+                        try:
+                            await server_stack.aclose()
+                        except Exception:
+                            pass
+
     async def _create_single_client(self, name: str, server: dict) -> None:
         """
         Internal helper to create a single client from config.

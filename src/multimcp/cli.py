@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 from src.multimcp.yaml_config import load_config, MultiMCPConfig
-from src.multimcp.cache_manager import merge_discovered_tools
+from src.multimcp.cache_manager import merge_discovered_tools, cleanup_stale_tools
 from src.utils.logger import get_logger
 
 logger = get_logger("multi_mcp.cli")
@@ -91,6 +91,9 @@ async def cmd_refresh(
 
     for name, tools in discovered.items():
         merge_discovered_tools(config, name, tools)
+        cleaned = cleanup_stale_tools(config, name)
+        if cleaned:
+            logger.info(f"🧹 Cleaned up {cleaned} stale+disabled tools from '{name}'")
 
     zero_tool_servers = [name for name, tools in discovered.items() if not tools]
 

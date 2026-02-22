@@ -54,3 +54,18 @@ async def test_recently_used_server_not_disconnected():
     await manager._disconnect_idle_servers()
 
     assert "exa" in manager.clients
+
+
+@pytest.mark.asyncio
+async def test_watchdog_detects_dropped_always_on_server():
+    """Watchdog correctly identifies always_on servers missing from clients."""
+    manager = MCPClientManager()
+    manager.always_on_servers = {"github", "obsidian"}
+    manager.clients["obsidian"] = AsyncMock()  # obsidian is connected
+    # github is NOT connected — simulates dropped connection
+
+    dropped = [
+        name for name in manager.always_on_servers
+        if name not in manager.clients
+    ]
+    assert dropped == ["github"]

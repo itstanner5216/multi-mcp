@@ -42,6 +42,20 @@ def merge_discovered_tools(
     return config
 
 
+def cleanup_stale_tools(config: MultiMCPConfig, server_name: str) -> int:
+    """Remove tools that are both stale and disabled. Returns count removed."""
+    server = config.servers.get(server_name)
+    if not server:
+        return 0
+    to_remove = [
+        name for name, entry in server.tools.items()
+        if entry.stale and not entry.enabled
+    ]
+    for name in to_remove:
+        del server.tools[name]
+    return len(to_remove)
+
+
 def get_enabled_tools(config: MultiMCPConfig, server_name: str) -> Set[str]:
     """Return set of tool names that should be exposed for a server."""
     server = config.servers.get(server_name)
