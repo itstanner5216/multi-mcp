@@ -290,14 +290,15 @@ class MCPClientManager:
     async def _create_single_client(self, name: str, server: dict) -> None:
         """
         Internal helper to create a single client from config.
+        Uses a per-server AsyncExitStack so a crashed client cannot
+        propagate exceptions into the shared server lifecycle.
 
         Args:
             name (str): Server name
             server (dict): Server configuration
         """
-        # Ensure stack is initialized
-        if not hasattr(self.stack, "_exit_callbacks"):
-            await self.stack.__aenter__()
+        server_stack = AsyncExitStack()
+        await server_stack.__aenter__()
 
         try:
             command = server.get("command")
@@ -314,27 +315,33 @@ class MCPClientManager:
                     args=args,
                     env=merged_env,
                 )
-                read, write = await self.stack.enter_async_context(stdio_client(params))
-                session = await self.stack.enter_async_context(
+                read, write = await server_stack.enter_async_context(stdio_client(params))
+                session = await server_stack.enter_async_context(
                     ClientSession(read, write)
                 )
 
             elif url:
                 self.logger.info(f"🌐 Creating SSE client for {name}")
-                read, write = await self.stack.enter_async_context(sse_client(url=url))
-                session = await self.stack.enter_async_context(
+                read, write = await server_stack.enter_async_context(sse_client(url=url))
+                session = await server_stack.enter_async_context(
                     ClientSession(read, write)
                 )
 
             else:
                 self.logger.warning(f"⚠️ Skipping {name}: No command or URL provided.")
+                await server_stack.aclose()
                 return
 
             self.clients[name] = session
+            self.server_stacks[name] = server_stack
             self.logger.info(f"✅ Connected to {name}")
 
         except Exception as e:
             self.logger.error(f"❌ Failed to create client for {name}: {e}")
+            try:
+                await server_stack.aclose()
+            except Exception:
+                pass
             raise
 
     async def create_clients(

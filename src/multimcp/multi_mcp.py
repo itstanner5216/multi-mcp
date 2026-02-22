@@ -108,8 +108,15 @@ class MultiMCP:
         for server_name, server_config in yaml_config.servers.items():
             server_dict = server_config.model_dump(exclude_none=True)
             if server_config.always_on:
-                # Eagerly connect always_on servers
-                await self.client_manager._create_single_client(server_name, server_dict)
+                # Eagerly connect always_on servers — failures are non-fatal,
+                # the watchdog will retry them in the background
+                try:
+                    await self.client_manager._create_single_client(server_name, server_dict)
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ Could not connect always_on server '{server_name}' at startup: {e} "
+                        f"— watchdog will retry"
+                    )
             else:
                 # Register lazy servers as pending — they connect on first tool call
                 self.client_manager.add_pending_server(server_name, server_dict)

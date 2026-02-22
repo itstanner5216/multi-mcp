@@ -48,11 +48,17 @@ class MCPProxyServer(server.Server):
 
     async def initialize_remote_clients(self) -> None:
         """Initialize all remote clients and store their capabilities."""
+        failed = []
         for name, client in self.client_manager.clients.items():
             try:
                 await self.initialize_single_client(name, client)
             except Exception as e:
                 self.logger.error(f"❌ Failed to initialize client {name}: {e}")
+                failed.append(name)
+        # Remove failed clients so their broken sessions don't crash tool listing
+        for name in failed:
+            self.client_manager.clients.pop(name, None)
+            self.client_manager.server_stacks.pop(name, None)
 
     async def initialize_single_client(self, name: str, client: ClientSession) -> None:
         """Initialize a specific client and map its capabilities."""
@@ -141,15 +147,9 @@ class MCPProxyServer(server.Server):
 
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
-        """Aggregate tools from all remote MCP servers and return a combined list."""
-        all_tools = []
-        for name, client in self.client_manager.clients.items():
-            try:
-                tools = await self._initialize_tools_for_client(name, client)
-                all_tools.extend(tools)  # .tools, not raw list
-            except Exception as e:
-                self.logger.error(f"Error fetching tools from {name}: {e}")
-
+        """Return the cached tool list. Tools are registered during initialization
+        and updated dynamically when servers are added/removed."""
+        all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
 
     async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
