@@ -104,22 +104,10 @@ class MultiMCP:
         )
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
 
-        # Register servers from YAML config
+        # Register ALL servers as pending — proxy starts instantly from YAML cache
         for server_name, server_config in yaml_config.servers.items():
             server_dict = server_config.model_dump(exclude_none=True)
-            if server_config.always_on:
-                # Eagerly connect always_on servers — failures are non-fatal,
-                # the watchdog will retry them in the background
-                try:
-                    await self.client_manager._create_single_client(server_name, server_dict)
-                except Exception as e:
-                    self.logger.warning(
-                        f"⚠️ Could not connect always_on server '{server_name}' at startup: {e} "
-                        f"— watchdog will retry"
-                    )
-            else:
-                # Register lazy servers as pending — they connect on first tool call
-                self.client_manager.add_pending_server(server_name, server_dict)
+            self.client_manager.add_pending_server(server_name, server_dict)
 
         # Start idle checker background task
         asyncio.create_task(self.client_manager.start_idle_checker())
@@ -132,8 +120,28 @@ class MultiMCP:
         }
         asyncio.create_task(self.client_manager.start_always_on_watchdog(always_on_configs))
 
+        # Background: connect always_on servers after proxy starts
+        async def _connect_always_on() -> None:
+            for server_name, server_config in yaml_config.servers.items():
+                if not server_config.always_on:
+                    continue
+                try:
+                    client = await self.client_manager.get_or_create_client(server_name)
+                    if self.proxy:
+                        await self.proxy.initialize_single_client(server_name, client)
+                        await self.proxy._send_tools_list_changed()
+                        self.logger.info(f"✅ Always-on server '{server_name}' connected")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Always-on '{server_name}' failed to connect: {e}")
+
         try:
             self.proxy = await MCPProxyServer.create(self.client_manager)
+
+            # Pre-populate tool list from YAML cache so tools are visible immediately
+            self.proxy.load_tools_from_yaml(yaml_config)
+
+            # Connect always_on servers in background (don't block startup)
+            asyncio.create_task(_connect_always_on())
 
             await self.start_server()
         finally:

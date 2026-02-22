@@ -13,7 +13,7 @@ from dataclasses import dataclass
 @dataclass
 class ToolMapping:
     server_name: str
-    client: ClientSession
+    client: Optional[ClientSession]  # None = server not yet connected (lazy/pending)
     tool: types.Tool
 
 
@@ -45,6 +45,40 @@ class MCPProxyServer(server.Server):
         proxy = cls(client_manager)
         await proxy.initialize_remote_clients()
         return proxy
+
+    def load_tools_from_yaml(self, yaml_config: "MultiMCPConfig") -> None:
+        """Pre-populate tool_to_server from YAML cache with client=None placeholders.
+
+        This allows tools to be listed immediately at startup without waiting for
+        server connections. When a tool is called, the server connects on demand.
+        Skips servers that already have live clients (avoids overwriting real entries).
+        """
+        from src.multimcp.cache_manager import get_enabled_tools
+        for server_name, server_config in yaml_config.servers.items():
+            # Don't overwrite entries already populated by live initialization
+            existing_keys = {
+                k for k, v in self.tool_to_server.items()
+                if v.server_name == server_name and v.client is not None
+            }
+            if existing_keys:
+                continue
+            enabled = get_enabled_tools(yaml_config, server_name)
+            for tool_name, tool_entry in server_config.tools.items():
+                if tool_name not in enabled:
+                    continue
+                key = self._make_key(server_name, tool_name)
+                if key in self.tool_to_server:
+                    continue
+                cached_tool = types.Tool(
+                    name=key,
+                    description=tool_entry.description,
+                    inputSchema={"type": "object", "properties": {}},
+                )
+                self.tool_to_server[key] = ToolMapping(
+                    server_name=server_name,
+                    client=None,
+                    tool=cached_tool,
+                )
 
     async def initialize_remote_clients(self) -> None:
         """Initialize all remote clients and store their capabilities."""
@@ -176,6 +210,25 @@ class MCPProxyServer(server.Server):
             tool_item = self.tool_to_server.get(tool_name)
 
         if tool_item:
+            # If client is None (cached from YAML, server not yet connected), connect now
+            if tool_item.client is None:
+                try:
+                    self.logger.info(f"🔌 Connecting '{tool_item.server_name}' on first tool call...")
+                    client = await self.client_manager.get_or_create_client(tool_item.server_name)
+                    await self.initialize_single_client(tool_item.server_name, client)
+                    tool_item = self.tool_to_server.get(tool_name)
+                except Exception as e:
+                    return types.ServerResult(
+                        content=[types.TextContent(type="text", text=f"Failed to connect server '{tool_item.server_name}': {e}")],
+                        isError=True,
+                    )
+
+            if tool_item is None or tool_item.client is None:
+                return types.ServerResult(
+                    content=[types.TextContent(type="text", text=f"Tool '{tool_name}' server failed to connect.")],
+                    isError=True,
+                )
+
             try:
                 self.logger.info(
                     f"✅ Calling tool '{tool_name}' on its associated server"
