@@ -58,7 +58,7 @@ class TestAuditLogger:
     def test_log_tool_call_creates_valid_jsonl_entry(self, audit_logger, temp_log_dir):
         """Test that tool call logging creates valid JSONL entries."""
         audit_logger.log_tool_call(
-            tool_name="calculator::add",
+            tool_name="calculator__add",
             server_name="calculator",
             arguments={"a": 5, "b": 3},
         )
@@ -71,7 +71,7 @@ class TestAuditLogger:
             entry = json.loads(line)
 
             assert entry["event_type"] == "tool_call"
-            assert entry["tool_name"] == "calculator::add"
+            assert entry["tool_name"] == "calculator__add"
             assert entry["server_name"] == "calculator"
             assert entry["arguments"] == {"a": 5, "b": 3}
             assert "timestamp" in entry

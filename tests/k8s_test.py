@@ -15,7 +15,7 @@ IMAGE_NAME = "multi-mcp"
 NODE_PORT = 30080
 BASE_DIR = Path(__file__).parent.parent.resolve()  # go up from tests/
 K8S_MANIFESTS_DIR = Path(f"{BASE_DIR}/examples/k8s")
-EXPECTED_TOOLS=["unit_convertor::convert_temperature","unit_convertor::convert_length", "calculator::add", "calculator::multiply"]
+EXPECTED_TOOLS=["unit_convertor__convert_temperature","unit_convertor__convert_length", "calculator__add", "calculator__multiply"]
 TEST_PROMPTS=[
         ("Convert temperature of 100 Celsius to Fahrenheit?", "212"),
         ("what's the answer for (10 + 5)?", "15"),

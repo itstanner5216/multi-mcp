@@ -3,7 +3,7 @@ import pytest
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from tests.utils import run_e2e_test_with_client
 
-EXPECTED_TOOLS=["weather::get_weather", "calculator::add", "calculator::multiply"]
+EXPECTED_TOOLS=["weather__get_weather", "calculator__add", "calculator__multiply"]
 TEST_PROMPTS=[
         ("what is the weather in London?", "weather in london"),
         ("what's the answer for (10 + 5)?", "15"),

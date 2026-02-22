@@ -3,8 +3,8 @@ Tests for Core Stabilization (Task 1):
 - Unregister filter bug for prompts/resources
 - Prompt/resource namespacing
 - Asyncio lock around register/unregister
-- Namespacing separator changed to ::
-- Name validation (no :: allowed in names)
+- Namespacing separator changed to __
+- Name validation (no __ allowed in names)
 - Resource key safety
 """
 
@@ -167,7 +167,7 @@ async def test_unregister_removes_resources_correctly(
 @pytest.mark.asyncio
 async def test_prompts_are_namespaced(server_with_prompts, test_prompt):
     """
-    Test that prompts are namespaced with server::prompt format.
+    Test that prompts are namespaced with server__prompt format.
     """
     async with create_connected_server_and_client_session(
         server_with_prompts
@@ -180,15 +180,15 @@ async def test_prompts_are_namespaced(server_with_prompts, test_prompt):
         # Check internal mapping uses namespaced key
         assert len(proxy.prompt_to_server) == 1
         keys = list(proxy.prompt_to_server.keys())
-        assert keys[0] == "PromptServer::test_prompt", (
-            f"Expected 'PromptServer::test_prompt', got '{keys[0]}'"
+        assert keys[0] == "PromptServer__test_prompt", (
+            f"Expected 'PromptServer__test_prompt', got '{keys[0]}'"
         )
 
 
 @pytest.mark.asyncio
 async def test_resources_are_namespaced(server_with_resources, test_resource):
     """
-    Test that resources are namespaced with server::name format (using name if available).
+    Test that resources are namespaced with server__name format (using name if available).
     """
     async with create_connected_server_and_client_session(
         server_with_resources
@@ -201,15 +201,15 @@ async def test_resources_are_namespaced(server_with_resources, test_resource):
         # Check internal mapping uses namespaced key
         assert len(proxy.resource_to_server) == 1
         keys = list(proxy.resource_to_server.keys())
-        assert keys[0] == "ResourceServer::test_resource", (
-            f"Expected 'ResourceServer::test_resource', got '{keys[0]}'"
+        assert keys[0] == "ResourceServer__test_resource", (
+            f"Expected 'ResourceServer__test_resource', got '{keys[0]}'"
         )
 
 
 @pytest.mark.asyncio
-async def test_tools_use_double_colon_separator(server_with_tool):
+async def test_tools_use_double_underscore_separator(server_with_tool):
     """
-    Test that tools use :: separator instead of _.
+    Test that tools use __ separator.
     """
     async with create_connected_server_and_client_session(server_with_tool) as client:
         client_manager = MCPClientManager()
@@ -217,25 +217,25 @@ async def test_tools_use_double_colon_separator(server_with_tool):
 
         proxy = await MCPProxyServer.create(client_manager)
 
-        # Check internal mapping uses :: separator
+        # Check internal mapping uses __ separator
         assert len(proxy.tool_to_server) == 1
         keys = list(proxy.tool_to_server.keys())
         tool_name = keys[0]
-        assert tool_name == "ToolServer::test_tool", (
-            f"Expected 'ToolServer::test_tool' with :: separator, got '{tool_name}'"
+        assert tool_name == "ToolServer__test_tool", (
+            f"Expected 'ToolServer__test_tool' with __ separator, got '{tool_name}'"
         )
-        assert "::" in tool_name, "Tool name should use :: separator"
+        assert "__" in tool_name, "Tool name should use __ separator"
 
 
 @pytest.mark.asyncio
-async def test_name_validation_rejects_double_colon():
+async def test_name_validation_rejects_double_underscore():
     """
-    Test that server/tool names containing :: are rejected during registration.
+    Test that server/tool names containing __ are rejected during registration.
     """
-    server = Server("Invalid::Server")
+    server = Server("Invalid__Server")
     tool = Tool(
-        name="invalid::tool",
-        description="Tool with :: in name",
+        name="invalid__tool",
+        description="Tool with __ in name",
         inputSchema={"type": "object", "properties": {}},
     )
 
@@ -247,9 +247,9 @@ async def test_name_validation_rejects_double_colon():
         client_manager = MCPClientManager()
         proxy = MCPProxyServer(client_manager)
 
-        # Should raise ValueError when trying to initialize with :: in name
-        with pytest.raises(ValueError, match="cannot contain.*::"):
-            await proxy.initialize_single_client("Invalid::Server", client)
+        # Should raise ValueError when trying to initialize with __ in name
+        with pytest.raises(ValueError, match="cannot contain.*__"):
+            await proxy.initialize_single_client("Invalid__Server", client)
 
 
 @pytest.mark.asyncio
@@ -314,6 +314,6 @@ async def test_resource_uri_with_separator_is_escaped():
         # Check that key uses name, not URI (which contains ::)
         assert len(proxy.resource_to_server) == 1
         keys = list(proxy.resource_to_server.keys())
-        assert keys[0] == "URIServer::safe_name", (
+        assert keys[0] == "URIServer__safe_name", (
             f"Key should use name, not URI. Got: {keys[0]}"
         )

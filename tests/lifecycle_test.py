@@ -7,7 +7,7 @@ from tests.utils import run_e2e_test_with_client
 
 MCP_SERVER_URL = "http://127.0.0.1:8080"
 HEADERS = {"Content-Type": "application/json"}
-EXPECTED_TOOLS=["convert_temperature","convert_length", "calculator::add", "calculator::multiply"]
+EXPECTED_TOOLS=["convert_temperature","convert_length", "calculator__add", "calculator__multiply"]
 TEST_PROMPTS=[
         ("Convert temperature of 100 Celsius to Fahrenheit?", "212"),
         ("what's the answer for (10 + 5)?", "15"),
