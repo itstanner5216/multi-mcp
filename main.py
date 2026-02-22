@@ -1,4 +1,5 @@
 import asyncio
+import anyio
 import argparse
 from pathlib import Path
 from src.multimcp.multi_mcp import MultiMCP
@@ -53,7 +54,9 @@ if __name__ == "__main__":
         asyncio.run(server.run())
 
     elif args.command == "refresh":
-        result = asyncio.run(cmd_refresh(server_filter=args.server))
+        async def _refresh():
+            return await cmd_refresh(server_filter=args.server)
+        result = anyio.run(_refresh)
         print(result)
 
     elif args.command == "status":

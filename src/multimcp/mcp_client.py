@@ -8,6 +8,7 @@ import time
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from langchain_mcp_adapters.client import (
     DEFAULT_ENCODING,
     DEFAULT_ENCODING_ERROR_HANDLER,
@@ -109,8 +110,8 @@ class MCPClientManager:
     ) -> Dict[str, list]:
         """Connect to every server, fetch tool lists, disconnect lazy ones.
 
-        Uses per-server AsyncExitStack so lazy servers can be properly closed
-        (not just removed from the clients dict).
+        stdio servers use AsyncExitStack (supports always_on keepalive).
+        SSE servers use direct async-with blocks (required for anyio cancel scope compat).
 
         Returns:
             Dict mapping server_name -> list[types.Tool]
@@ -118,62 +119,104 @@ class MCPClientManager:
         results: Dict[str, list] = {}
 
         for name, server_config in config.servers.items():
-            server_stack = AsyncExitStack()
-            try:
-                await server_stack.__aenter__()
-                server_dict = server_config.model_dump(exclude_none=True)
+            server_dict = server_config.model_dump(exclude_none=True)
+            command = server_dict.get("command")
+            url = server_dict.get("url")
 
-                command = server_dict.get("command")
-                url = server_dict.get("url")
-                args = server_dict.get("args", [])
-                env = server_dict.get("env", {})
-                merged_env = os.environ.copy()
-                merged_env.update(env)
-
-                if command:
-                    params = StdioServerParameters(command=command, args=args, env=merged_env)
-                    read, write = await server_stack.enter_async_context(stdio_client(params))
-                elif url:
-                    read, write = await server_stack.enter_async_context(sse_client(url=url))
-                else:
-                    self.logger.warning(f"⚠️ Skipping '{name}': no command or URL")
-                    await server_stack.aclose()
-                    results[name] = []
-                    continue
-
-                client = await server_stack.enter_async_context(ClientSession(read, write))
-
-                init_result = await client.initialize()
-                tools = []
-                if init_result.capabilities.tools:
-                    tools_result = await client.list_tools()
-                    tools = tools_result.tools
-
-                results[name] = tools
-
-                if not server_config.always_on:
-                    # Properly close the connection — subprocess terminated, socket closed
-                    await server_stack.aclose()
-                    self.logger.info(
-                        f"🔌 Discovered {len(tools)} tools from '{name}', disconnected (lazy)"
-                    )
-                else:
-                    # Keep always_on server alive — store stack and client
-                    self.server_stacks[name] = server_stack
-                    self.clients[name] = client
-                    self.logger.info(
-                        f"✅ Discovered {len(tools)} tools from '{name}', staying connected (always_on)"
-                    )
-
-            except Exception as e:
-                self.logger.error(f"❌ Discovery failed for '{name}': {e}")
-                try:
-                    await server_stack.aclose()
-                except Exception:
-                    pass
+            if not command and not url:
+                self.logger.warning(f"⚠️ Skipping '{name}': no command or URL")
                 results[name] = []
+                continue
+
+            if url:
+                # SSE: use direct async-with to stay within anyio's cancel scope rules
+                results[name] = await self._discover_sse(name, url, server_config)
+            else:
+                # stdio: use AsyncExitStack so always_on servers can stay connected
+                results[name] = await self._discover_stdio(name, server_dict, server_config)
 
         return results
+
+    async def _discover_sse(self, name: str, url: str, server_config: "ServerConfig") -> list:
+        """Discover tools from an HTTP/SSE server (anyio-compatible direct async-with).
+
+        Tries Streamable HTTP (POST) first — the current MCP spec default.
+        Falls back to legacy SSE (GET) if the server returns 405.
+        """
+        # Try Streamable HTTP (POST) first — newer spec, used by Exa and others
+        try:
+            async with streamable_http_client(url) as (read, write, _):
+                async with ClientSession(read, write) as client:
+                    init_result = await client.initialize()
+                    tools = []
+                    if init_result.capabilities.tools:
+                        tools_result = await client.list_tools()
+                        tools = tools_result.tools
+                    self.logger.info(
+                        f"🔌 Discovered {len(tools)} tools from '{name}' (streamable-http)"
+                    )
+                    return tools
+        except Exception as e:
+            self.logger.debug(f"Streamable HTTP failed for '{name}', trying SSE: {e}")
+
+        # Fall back to legacy SSE (GET)
+        try:
+            async with sse_client(url=url) as (read, write):
+                async with ClientSession(read, write) as client:
+                    init_result = await client.initialize()
+                    tools = []
+                    if init_result.capabilities.tools:
+                        tools_result = await client.list_tools()
+                        tools = tools_result.tools
+                    self.logger.info(
+                        f"🔌 Discovered {len(tools)} tools from '{name}' (SSE)"
+                    )
+                    return tools
+        except Exception as e:
+            self.logger.error(f"❌ Discovery failed for '{name}': {e}")
+            return []
+
+    async def _discover_stdio(self, name: str, server_dict: dict, server_config: "ServerConfig") -> list:
+        """Discover tools from a stdio server. Keeps always_on servers connected."""
+        server_stack = AsyncExitStack()
+        try:
+            await server_stack.__aenter__()
+            command = server_dict.get("command")
+            args = server_dict.get("args", [])
+            env = server_dict.get("env", {})
+            merged_env = os.environ.copy()
+            merged_env.update(env)
+
+            params = StdioServerParameters(command=command, args=args, env=merged_env)
+            read, write = await server_stack.enter_async_context(stdio_client(params))
+            client = await server_stack.enter_async_context(ClientSession(read, write))
+
+            init_result = await client.initialize()
+            tools = []
+            if init_result.capabilities.tools:
+                tools_result = await client.list_tools()
+                tools = tools_result.tools
+
+            if not server_config.always_on:
+                await server_stack.aclose()
+                self.logger.info(
+                    f"🔌 Discovered {len(tools)} tools from '{name}', disconnected (lazy)"
+                )
+            else:
+                self.server_stacks[name] = server_stack
+                self.clients[name] = client
+                self.logger.info(
+                    f"✅ Discovered {len(tools)} tools from '{name}', staying connected (always_on)"
+                )
+            return tools
+
+        except Exception as e:
+            self.logger.error(f"❌ Discovery failed for '{name}': {e}")
+            try:
+                await server_stack.aclose()
+            except Exception:
+                pass
+            return []
 
     def record_usage(self, server_name: str) -> None:
         """Update last-used timestamp for a server."""
