@@ -31,7 +31,7 @@ class MCPSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
-    config: str = "./mcp.json"
+    config: Optional[str] = None
     api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
 
     model_config = SettingsConfigDict(env_prefix="MULTI_MCP_")
@@ -59,6 +59,11 @@ class MultiMCP:
             config = await self._first_run_discovery(yaml_path)
         else:
             self.logger.info(f"Loaded config from {yaml_path}")
+            # Merge any new servers from JSON that aren't in YAML yet
+            new_servers = self._find_new_json_servers(config)
+            if new_servers:
+                self.logger.info(f"🔍 Found {len(new_servers)} new server(s) in JSON config: {', '.join(new_servers)}")
+                config = await self._discover_new_servers(config, new_servers, yaml_path)
 
         # Apply tool filters, idle timeouts, and always_on settings
         for server_name, server_config in config.servers.items():
@@ -76,10 +81,21 @@ class MultiMCP:
         return config
 
     async def _first_run_discovery(self, yaml_path: Path) -> MultiMCPConfig:
-        """Connect to all servers from JSON config, discover tools, write YAML."""
+        """Connect to all servers from JSON/plugin config, discover tools, write YAML."""
         config = MultiMCPConfig()
-        json_config = self.load_mcp_config(path=self.settings.config) or {}
-        json_servers = json_config.get("mcpServers", {})
+
+        # Gather servers from JSON config (if provided) and Claude plugins
+        json_servers: dict[str, dict] = {}
+        if self.settings.config:
+            json_config = self.load_mcp_config(path=self.settings.config) or {}
+            json_servers.update(self._extract_mcp_servers(json_config))
+        plugin_servers = self._scan_claude_plugins()
+        if plugin_servers:
+            self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
+            # Don't overwrite JSON-defined servers with plugin versions
+            for name, srv in plugin_servers.items():
+                if name not in json_servers:
+                    json_servers[name] = srv
 
         for name, srv in json_servers.items():
             valid_fields = ServerConfig.model_fields.keys()
@@ -95,6 +111,163 @@ class MultiMCP:
 
         save_config(config, yaml_path)
         self.logger.info(f"Wrote initial config to {yaml_path}")
+        return config
+
+    @staticmethod
+    def _extract_mcp_servers(data: dict) -> dict[str, dict]:
+        """Extract MCP server entries from various config formats.
+
+        Supports:
+          - { "mcpServers": { ... } }  (Claude Desktop, Copilot CLI, OpenCode)
+          - { "servers": { ... } }     (VSCode)
+          - { "mcp": { ... } }         (Gemini/OpenCode alternate)
+          - { "name": { "command": ..., "args": ... } }  (Claude plugin .mcp.json)
+        """
+        for key in ("mcpServers", "servers", "mcp"):
+            section = data.get(key)
+            if isinstance(section, dict) and section:
+                return MultiMCP._normalize_server_entries(section)
+
+        # Bare format: every top-level key is a server name (Claude plugins)
+        if all(isinstance(v, dict) for v in data.values()) and data:
+            # Verify at least one entry looks like a server config
+            server_keys = {"command", "args", "url", "type"}
+            if any(server_keys & set(v.keys()) for v in data.values()):
+                return MultiMCP._normalize_server_entries(data)
+        return {}
+
+    @staticmethod
+    def _normalize_server_entries(section: dict) -> dict[str, dict]:
+        """Normalize server entries: handle command-as-list, filter non-dicts."""
+        normalized = {}
+        for name, srv in section.items():
+            if not isinstance(srv, dict):
+                continue
+            if "command" in srv and isinstance(srv["command"], list):
+                cmd_list = srv["command"]
+                srv = {**srv, "command": cmd_list[0], "args": cmd_list[1:]}
+            normalized[name] = srv
+        return normalized
+
+    def _scan_claude_plugins(self) -> dict[str, dict]:
+        """Scan Claude Code plugin cache for active MCP server configs."""
+        plugins_dir = Path.home() / ".claude" / "plugins" / "cache"
+        settings_path = Path.home() / ".claude" / "settings.local.json"
+        if not plugins_dir.exists():
+            return {}
+
+        # Load disabled plugins from Claude settings
+        # Plugins not listed are treated as enabled (Claude default behavior)
+        disabled_plugins: set[str] = set()
+        if settings_path.exists():
+            try:
+                with open(settings_path) as f:
+                    settings = json.load(f)
+                for plugin_id, is_enabled in settings.get("enabledPlugins", {}).items():
+                    if not is_enabled:
+                        disabled_plugins.add(plugin_id)
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        servers: dict[str, dict] = {}
+        for mcp_json in plugins_dir.rglob(".mcp.json"):
+            plugin_dir = mcp_json.parent
+            # Skip orphaned (old) plugin versions
+            if (plugin_dir / ".orphaned_at").exists():
+                continue
+            # Check if plugin is enabled in Claude settings
+            # Plugin path: .../cache/{source}/{name}/{version}/
+            parts = plugin_dir.relative_to(plugins_dir).parts
+            if len(parts) >= 2:
+                plugin_id = f"{parts[1]}@{parts[0]}"
+                if plugin_id in disabled_plugins:
+                    continue
+            try:
+                with open(mcp_json) as f:
+                    data = json.load(f)
+                extracted = self._extract_mcp_servers(data)
+                if extracted:
+                    servers.update(extracted)
+            except (json.JSONDecodeError, OSError):
+                continue
+        return servers
+
+    def _find_new_json_servers(self, config: MultiMCPConfig) -> dict:
+        """Return server configs not already in YAML.
+
+        Priority:
+        1. msc/mcp.json exists → sole source (no auto-discovery)
+        2. Otherwise → scan config.sources paths + Claude plugin cache
+        """
+        all_json_servers: dict[str, dict] = {}
+
+        if self.settings.config and os.path.exists(self.settings.config):
+            # Dedicated mcp.json exists — use only that
+            json_config = self.load_mcp_config(path=self.settings.config) or {}
+            all_json_servers.update(self._extract_mcp_servers(json_config))
+        else:
+            # Auto-discover from configured sources
+            if config.sources:
+                MCP_CONFIG_NAMES = [
+                    "mcp.json", ".mcp.json", "mcp-config.json",
+                    "mcp_config.json", "claude_desktop_config.json",
+                ]
+                for source_path in config.sources:
+                    expanded = os.path.expanduser(source_path)
+                    if not os.path.exists(expanded):
+                        self.logger.warning(f"⚠️ Source path not found: {expanded}")
+                        continue
+                    files_to_check = []
+                    if os.path.isdir(expanded):
+                        for name in MCP_CONFIG_NAMES:
+                            candidate = os.path.join(expanded, name)
+                            if os.path.isfile(candidate):
+                                files_to_check.append(candidate)
+                    else:
+                        files_to_check.append(expanded)
+                    for filepath in files_to_check:
+                        try:
+                            with open(filepath, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                            servers = self._extract_mcp_servers(data)
+                            if servers:
+                                self.logger.info(f"📂 Found {len(servers)} server(s) in {filepath}")
+                                all_json_servers.update(servers)
+                        except (json.JSONDecodeError, OSError) as e:
+                            self.logger.warning(f"⚠️ Failed to read source {filepath}: {e}")
+
+            # Always scan Claude plugin cache
+            plugin_servers = self._scan_claude_plugins()
+            if plugin_servers:
+                self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
+                all_json_servers.update(plugin_servers)
+
+        new_servers = {}
+        for name, srv in all_json_servers.items():
+            if name not in config.servers:
+                valid_fields = ServerConfig.model_fields.keys()
+                filtered = {k: v for k, v in srv.items() if k in valid_fields}
+                ignored = set(srv.keys()) - set(filtered.keys())
+                if ignored:
+                    self.logger.warning(f"⚠️ '{name}': ignoring unknown config keys: {ignored}")
+                new_servers[name] = ServerConfig(**filtered)
+        return new_servers
+
+    async def _discover_new_servers(
+        self, config: MultiMCPConfig, new_servers: dict, yaml_path: Path
+    ) -> MultiMCPConfig:
+        """Discover tools from new servers and merge them into existing config."""
+        # Add new servers to config for discovery
+        discovery_config = MultiMCPConfig(servers=new_servers)
+        for name, srv in new_servers.items():
+            config.servers[name] = srv
+
+        discovered = await self.client_manager.discover_all(discovery_config)
+        for server_name, tools in discovered.items():
+            merge_discovered_tools(config, server_name, tools)
+
+        save_config(config, yaml_path)
+        self.logger.info(f"📝 Updated config with new servers at {yaml_path}")
         return config
 
     async def run(self):
@@ -147,9 +320,9 @@ class MultiMCP:
         finally:
             await self.client_manager.close()
 
-    def load_mcp_config(self, path="./mcp.json"):
+    def load_mcp_config(self, path=None):
         """Loads MCP JSON configuration From File."""
-        if not os.path.exists(path):
+        if not path or not os.path.exists(path):
             self.logger.error(f"❌ Config file does not exist: {path}")
             return None
 

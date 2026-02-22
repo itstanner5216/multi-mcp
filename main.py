@@ -16,8 +16,8 @@ def parse_args():
     start.add_argument("--host", type=str, default="127.0.0.1")
     start.add_argument("--port", type=int, default=8085)
     start.add_argument(
-        "--config", type=str, default="./examples/config/mcp.json",
-        help="Legacy JSON config (used only on first run if no YAML exists)"
+        "--config", type=str, default=None,
+        help="Path to MCP JSON config. If omitted, auto-discovers from Claude plugins and YAML sources."
     )
     start.add_argument("--api-key", type=str, default=None)
     start.add_argument(

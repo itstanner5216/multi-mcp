@@ -24,6 +24,7 @@ class ServerConfig(BaseModel):
 
 class MultiMCPConfig(BaseModel):
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
+    sources: list[str] = Field(default_factory=list)
 
 
 def load_config(path: Path) -> MultiMCPConfig:
