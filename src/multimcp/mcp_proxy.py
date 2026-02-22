@@ -98,8 +98,8 @@ class MCPProxyServer(server.Server):
         """Initialize a specific client and map its capabilities."""
 
         # Validate name doesn't contain separator
-        if "::" in name:
-            raise ValueError(f"Server name '{name}' cannot contain '::' separator")
+        if "__" in name:
+                    raise ValueError(f"Server name '{name}' cannot contain '__' separator")
 
         self.logger.info(f"try initialize client {name}: {client}")
         result = await client.initialize()
@@ -112,7 +112,7 @@ class MCPProxyServer(server.Server):
             try:
                 prompts_result = await client.list_prompts()
                 for prompt in prompts_result.prompts:
-                    if "::" in prompt.name:
+                    if "__" in prompt.name:
                         continue
                     key = self._make_key(name, prompt.name)
                     self.prompt_to_server[key] = client
@@ -124,7 +124,7 @@ class MCPProxyServer(server.Server):
                 resources_result = await client.list_resources()
                 for resource in resources_result.resources:
                     resource_key = resource.name if resource.name else resource.uri
-                    if "::" in resource_key:
+                    if "__" in resource_key:
                         continue
                     key = self._make_key(name, resource_key)
                     self.resource_to_server[key] = client
@@ -233,8 +233,9 @@ class MCPProxyServer(server.Server):
                 self.logger.info(
                     f"✅ Calling tool '{tool_name}' on its associated server"
                 )
+                _, original_name = self._split_key(tool_name)
                 result = await tool_item.client.call_tool(
-                    tool_item.tool.name, arguments
+                    original_name, arguments
                 )
 
                 # Log successful tool invocation
@@ -521,14 +522,15 @@ class MCPProxyServer(server.Server):
 
             key = self._make_key(server_name, tool.name)
 
-            # Store ToolMapping object
-            self.tool_to_server[key] = ToolMapping(
-                server_name=server_name, client=client, tool=tool
-            )
-
-            # Create a copy of the tool with updated key as name
+            # Create a copy of the tool with namespaced key as name
             namespaced_tool = tool.model_copy()
             namespaced_tool.name = key
+
+            # Store ToolMapping with namespaced tool (consistent with load_tools_from_yaml)
+            self.tool_to_server[key] = ToolMapping(
+                server_name=server_name, client=client, tool=namespaced_tool
+            )
+
             tool_list.append(namespaced_tool)
 
         return tool_list
@@ -546,13 +548,13 @@ class MCPProxyServer(server.Server):
 
     @staticmethod
     def _make_key(server_name: str, item_name: str) -> str:
-        """Returns a namespaced key like 'server::item' to uniquely identify items per server."""
-        return f"{server_name}::{item_name}"
+        """Returns a namespaced key like 'server__item' to uniquely identify items per server."""
+        return f"{server_name}__{item_name}"
 
     @staticmethod
     def _split_key(key: str) -> tuple[str, str]:
         """Splits a namespaced key back into (server, item)."""
-        parts = key.split("::", 1)
+        parts = key.split("__", 1)
         if len(parts) != 2:
             raise ValueError(f"Invalid namespaced key: {key}")
         return (parts[0], parts[1])
