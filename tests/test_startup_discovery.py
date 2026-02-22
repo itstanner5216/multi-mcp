@@ -49,8 +49,8 @@ async def test_discover_all_returns_tool_dict():
         "github": ServerConfig(command="/fake/run-github.sh", always_on=False)
     })
 
-    with patch("mcp.client.stdio.stdio_client", transport_ctx), \
-         patch("mcp.client.session.ClientSession", return_value=mock_session):
+    with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
+         patch("src.multimcp.mcp_client.ClientSession", return_value=mock_session):
         results = await manager.discover_all(config)
 
     assert "github" in results
@@ -69,8 +69,8 @@ async def test_discover_all_disconnects_lazy_servers():
         "tavily": ServerConfig(command="/fake/run-tavily.sh", always_on=False)
     })
 
-    with patch("mcp.client.stdio.stdio_client", transport_ctx), \
-         patch("mcp.client.session.ClientSession", return_value=mock_session):
+    with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
+         patch("src.multimcp.mcp_client.ClientSession", return_value=mock_session):
         await manager.discover_all(config)
 
     assert "tavily" not in manager.clients
@@ -88,8 +88,8 @@ async def test_discover_all_keeps_always_on_connected():
         "github": ServerConfig(command="/fake/run-github.sh", always_on=True)
     })
 
-    with patch("mcp.client.stdio.stdio_client", transport_ctx), \
-         patch("mcp.client.session.ClientSession", return_value=mock_session):
+    with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
+         patch("src.multimcp.mcp_client.ClientSession", return_value=mock_session):
         await manager.discover_all(config)
 
     assert "github" in manager.clients
@@ -105,7 +105,7 @@ async def test_discover_all_handles_failed_server_gracefully():
     })
 
     # Patch stdio_client to raise so the except branch in discover_all fires
-    with patch("mcp.client.stdio.stdio_client", side_effect=Exception("spawn failed")):
+    with patch("src.multimcp.mcp_client.stdio_client", side_effect=Exception("spawn failed")):
         results = await manager.discover_all(config)
 
     assert "broken_server" in results

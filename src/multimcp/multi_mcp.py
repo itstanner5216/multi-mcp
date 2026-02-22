@@ -103,19 +103,19 @@ class MultiMCP:
         self.logger.info(
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
-        await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+        yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
 
-        config = self.load_mcp_config(path=self.settings.config)
-        if not config:
-            self.logger.error("❌ Failed to load MCP config.")
-            return
-        clients = await self.client_manager.create_clients(config)
-        if not clients:
-            self.logger.error("❌ No valid clients were created.")
-            return
+        # Register servers from YAML config
+        for server_name, server_config in yaml_config.servers.items():
+            server_dict = server_config.model_dump(exclude_none=True)
+            if server_config.always_on:
+                # Eagerly connect always_on servers
+                await self.client_manager._create_single_client(server_name, server_dict)
+            else:
+                # Register lazy servers as pending — they connect on first tool call
+                self.client_manager.add_pending_server(server_name, server_dict)
 
-        self.logger.info(f"✅ Connected clients: {list(clients.keys())}")
-
+        # Start idle checker background task
         asyncio.create_task(self.client_manager.start_idle_checker())
 
         try:
@@ -360,9 +360,7 @@ class MultiMCP:
             # Count connected servers
             connected_count = len(self.proxy.client_manager.clients)
 
-            # Count pending servers (Task 05 will add pending_configs)
-            # Use getattr to gracefully handle absence of pending_configs
-            pending_configs = getattr(self.proxy.client_manager, "pending_configs", {})
+            pending_configs = self.proxy.client_manager.pending_configs
             pending_count = len(pending_configs)
 
             return JSONResponse(

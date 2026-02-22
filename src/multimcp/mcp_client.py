@@ -131,11 +131,9 @@ class MCPClientManager:
                 merged_env.update(env)
 
                 if command:
-                    from mcp.client.stdio import StdioServerParameters, stdio_client
                     params = StdioServerParameters(command=command, args=args, env=merged_env)
                     read, write = await server_stack.enter_async_context(stdio_client(params))
                 elif url:
-                    from mcp.client.sse import sse_client
                     read, write = await server_stack.enter_async_context(sse_client(url=url))
                 else:
                     self.logger.warning(f"⚠️ Skipping '{name}': no command or URL")
@@ -143,7 +141,6 @@ class MCPClientManager:
                     results[name] = []
                     continue
 
-                from mcp.client.session import ClientSession
                 client = await server_stack.enter_async_context(ClientSession(read, write))
 
                 init_result = await client.initialize()
