@@ -75,30 +75,27 @@ class MCPProxyServer(server.Server):
             await self._initialize_tools_for_client(name, client)
 
         if result.capabilities.prompts:
-            prompts_result = await client.list_prompts()
-            for prompt in prompts_result.prompts:
-                # Validate prompt name
-                if "::" in prompt.name:
-                    raise ValueError(
-                        f"Prompt name '{prompt.name}' cannot contain '::' separator"
-                    )
-                # Namespace the prompt
-                key = self._make_key(name, prompt.name)
-                self.prompt_to_server[key] = client
+            try:
+                prompts_result = await client.list_prompts()
+                for prompt in prompts_result.prompts:
+                    if "::" in prompt.name:
+                        continue
+                    key = self._make_key(name, prompt.name)
+                    self.prompt_to_server[key] = client
+            except Exception as e:
+                self.logger.warning(f"⚠️ '{name}' advertises prompts but list_prompts failed: {e}")
 
         if result.capabilities.resources:
-            resources_result = await client.list_resources()
-            for resource in resources_result.resources:
-                # Use resource name if available, otherwise use URI
-                resource_key = resource.name if resource.name else resource.uri
-                # Validate resource key
-                if "::" in resource_key:
-                    raise ValueError(
-                        f"Resource key '{resource_key}' cannot contain '::' separator"
-                    )
-                # Namespace the resource
-                key = self._make_key(name, resource_key)
-                self.resource_to_server[key] = client
+            try:
+                resources_result = await client.list_resources()
+                for resource in resources_result.resources:
+                    resource_key = resource.name if resource.name else resource.uri
+                    if "::" in resource_key:
+                        continue
+                    key = self._make_key(name, resource_key)
+                    self.resource_to_server[key] = client
+            except Exception as e:
+                self.logger.warning(f"⚠️ '{name}' advertises resources but list_resources failed: {e}")
 
     async def register_client(self, name: str, client: ClientSession) -> None:
         """Add a new client and register its capabilities."""
