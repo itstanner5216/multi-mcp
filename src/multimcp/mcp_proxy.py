@@ -455,9 +455,20 @@ class MCPProxyServer(server.Server):
     ) -> list[types.Tool]:
         """Fetch tools from a client, populate tool_to_server, and return them with namespaced keys."""
         tool_list = []
+        tool_filter = (
+            self.client_manager.tool_filters.get(server_name)
+            if self.client_manager
+            else None
+        )
 
         tools_result = await client.list_tools()
         for tool in tools_result.tools:
+            if not self._is_tool_allowed(tool.name, tool_filter):
+                self.logger.debug(
+                    f"🚫 Filtered out '{tool.name}' from '{server_name}'"
+                )
+                continue
+
             key = self._make_key(server_name, tool.name)
 
             # Store ToolMapping object
@@ -471,6 +482,17 @@ class MCPProxyServer(server.Server):
             tool_list.append(namespaced_tool)
 
         return tool_list
+
+    @staticmethod
+    def _is_tool_allowed(tool_name: str, filter_config: Optional[dict]) -> bool:
+        """Return True if the tool should be exposed given the filter config."""
+        if filter_config is None:
+            return True
+        deny = filter_config.get("deny", [])
+        if tool_name in deny:
+            return False
+        allow = filter_config.get("allow", ["*"])
+        return "*" in allow or tool_name in allow
 
     @staticmethod
     def _make_key(server_name: str, item_name: str) -> str:
