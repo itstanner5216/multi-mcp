@@ -4,7 +4,7 @@ import uvicorn
 import json
 from pathlib import Path
 from typing import Literal, Any, Optional
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from mcp.server.stdio import stdio_server
 from starlette.applications import Starlette
@@ -34,8 +34,7 @@ class MCPSettings(BaseSettings):
     config: str = "./mcp.json"
     api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
 
-    class Config:
-        env_prefix = "MULTI_MCP_"
+    model_config = SettingsConfigDict(env_prefix="MULTI_MCP_")
 
 
 class MultiMCP:
