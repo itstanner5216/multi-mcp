@@ -9,10 +9,6 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
-from langchain_mcp_adapters.client import (
-    DEFAULT_ENCODING,
-    DEFAULT_ENCODING_ERROR_HANDLER,
-)
 from src.utils.logger import get_logger
 
 
@@ -308,11 +304,6 @@ class MCPClientManager:
             url = server.get("url")
             args = server.get("args", [])
             env = server.get("env", {})
-            encoding = server.get("encoding", DEFAULT_ENCODING)
-            encoding_error_handler = server.get(
-                "encoding_error_handler", DEFAULT_ENCODING_ERROR_HANDLER
-            )
-
             merged_env = os.environ.copy()
             merged_env.update(env)
 
@@ -322,8 +313,6 @@ class MCPClientManager:
                     command=command,
                     args=args,
                     env=merged_env,
-                    encoding=encoding,
-                    encoding_error_handler=encoding_error_handler,
                 )
                 read, write = await self.stack.enter_async_context(stdio_client(params))
                 session = await self.stack.enter_async_context(
