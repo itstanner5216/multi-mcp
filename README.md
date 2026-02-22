@@ -1,206 +1,280 @@
+# multi-mcp
 
-# **Multi MCP**
+A production-ready MCP proxy server that aggregates multiple backend MCP servers into a single endpoint — with lazy loading, per-tool filtering, and a unified YAML config that doubles as a live control plane.
 
-A flexible and dynamic **Multi-MCP** Proxy Server that acts as a single MCP server while connecting to and routing between
-multiple backend MCP servers over `STDIO` or `SSE`.
+```
+All your AI tools → multi-mcp → github, obsidian, exa, tavily, context7, ...
+```
 
-<p align="center">
-  <img src="assets/multi-mcp-diagram.png" alt="Multi-MCP Server Architecture" width="300"/>
-</p>
+---
 
-## 🚀 Features
+## Why
 
-- ✅ Supports both `STDIO` and `SSE` transports
-- ✅ Can connect to MCP servers running in either `STDIO` or `SSE` mode
-- ✅ Proxies requests to multiple MCP servers
-- ✅ Automatically initializes capabilities (tools, prompts, resources) from connected servers
-- ✅ Dynamically **add/remove MCP servers** at runtime (via HTTP API)
-- ✅ Supports tools with the same name on different servers (using namespacing)
-- ✅ Deployable on Kubernetes, exposing a single port to access all connected MCP servers through the proxy
+Most MCP setups require configuring every server individually in every tool (Claude Code, Codex, Cursor, etc.). Each server starts eagerly at boot. You have no easy way to disable specific tools from a server you otherwise want.
 
-## 📦 Installation
+**multi-mcp** solves all three:
 
-To get started with this project locally:
+- **One endpoint** — configure it once, every tool connects to multi-mcp
+- **Lazy loading** — servers only connect when a tool is actually called
+- **Tool control** — flip `enabled: false` on any individual tool in a YAML file
+
+---
+
+## Features
+
+- **Unified YAML config** — single file serves as cache, config, and control plane
+- **Startup discovery** — connects to every server briefly at first run, caches tool lists, disconnects lazy servers
+- **Lazy loading** — lazy servers reconnect on first tool call, auto-disconnect after idle timeout
+- **Always-on servers** — stays connected permanently, auto-reconnects if dropped
+- **Per-tool enable/disable** — expose exactly the tools you want from each server
+- **Smart refresh** — re-discovers tools without overwriting your settings
+- **Stale tool cleanup** — tools that disappear from a server and were disabled get pruned automatically
+- **Supports all transports** — stdio, SSE, and Streamable HTTP (2025 spec)
+- **Tool namespacing** — `server::tool_name` prevents conflicts across servers
+- **Runtime HTTP API** — add/remove servers without restarting (SSE mode)
+- **Audit logging** — JSONL log of every tool call
+- **API key auth** — optional Bearer token for SSE mode
+
+---
+
+## Quick Start
+
+**Requirements:** Python 3.10+, [uv](https://github.com/astral-sh/uv)
 
 ```bash
-# Clone the repository
-git clone https://github.com/kfirtoledo/multi-mcp.git
+git clone https://github.com/itstanner5216/multi-mcp
 cd multi-mcp
-
-# Install using uv (recommended)
-uv venv
-uv pip install -r requirements.txt
+uv sync
 ```
 
-## 🖥️ Running Locally
-
-You can run the proxy locally in either `STDIO` or `SSE` mode depending on your needs:
-
-### 1. STDIO Mode
-For CLI-style operation (pipe-based communication).
-Used for chaining locally executed tools or agents.
+**First run** — auto-discovers all your servers and writes `~/.config/multi-mcp/servers.yaml`:
 
 ```bash
-uv run main.py --transport stdio
+uv run python main.py start
 ```
 
-### 2. SSE Mode
-Runs an HTTP SSE server that exposes a `/sse` endpoint.
-Useful for remote access, browser agents, and network-based tools.
+**Or refresh manually** to re-discover tools and update the YAML:
 
 ```bash
-uv run main.py --transport sse
+uv run python main.py refresh
 ```
 
-**Note:** You can also configure the host and port using `--host` / `--port` arguments.
+---
 
-### 3. Production Mode (with External MCP Servers)
+## Config
 
-For production deployments with external MCP servers (GitHub, Brave Search, Context7), use the included startup script:
+On first run, multi-mcp creates `~/.config/multi-mcp/servers.yaml` by connecting to every server you've configured, fetching its tool list, then disconnecting. The resulting file looks like:
+
+```yaml
+servers:
+  github:
+    command: /path/to/run-github.sh
+    always_on: true          # stays connected at all times
+    idle_timeout_minutes: 5
+    tools:
+      search_repositories:
+        enabled: true
+      delete_repository:
+        enabled: false        # hidden from all AI tools
+      create_gist:
+        enabled: false
+
+  exa:
+    url: https://mcp.exa.ai/mcp?tools=web_search_exa,get_code_context_exa
+    always_on: false          # lazy: connects only when called
+    idle_timeout_minutes: 5
+    tools:
+      web_search_exa:
+        enabled: true
+      linkedin_search_exa:
+        enabled: false        # don't need this
+
+  obsidian:
+    command: /path/to/run-obsidian.sh
+    always_on: true
+    tools: {}                 # auto-populated on first run
+```
+
+**Tool control rules:**
+
+| State | Behavior |
+|-------|----------|
+| `enabled: true` | Exposed to AI |
+| `enabled: false` | Hidden — setting is never overwritten by refresh |
+| Tool disappears from server | Marked `stale: true`, your setting preserved |
+| `stale: true` + `enabled: false` | Cleaned up on next refresh |
+| No `tools` key | All tools pass through (default) |
+
+To disable a tool, just set `enabled: false` and save. Takes effect on next `multi-mcp start`.
+
+---
+
+## CLI
 
 ```bash
-# Set required environment variables
-export GITHUB_PERSONAL_ACCESS_TOKEN="your-token-here"
-export BRAVE_API_KEY="your-api-key-here"
-export MULTI_MCP_API_KEY="your-secret-key"  # Optional, for authentication
+# Start the proxy (stdio mode — used by Claude Code, Codex, etc.)
+uv run python main.py start
 
-# Run the startup script
-./start-server.sh
+# Start in SSE mode (network accessible)
+uv run python main.py start --transport sse --port 8085
+
+# Re-discover tools from all servers, smart-merge into YAML
+uv run python main.py refresh
+
+# Re-discover tools from one server only
+uv run python main.py refresh github
+
+# Show server status and tool counts
+uv run python main.py status
+
+# List all tools with enabled/disabled status
+uv run python main.py list
+
+# Filter to one server
+uv run python main.py list --server github
+
+# Show only disabled tools
+uv run python main.py list --disabled
 ```
 
-The production configuration is stored in `msc/mcp.json` (git-ignored for security). This configuration includes:
-- **GitHub MCP Server**: Repository management, issues, pull requests
-- **Brave Search MCP Server**: Web search capabilities
-- **Context7 MCP Server**: Library documentation and code examples
+---
 
-All servers use environment variable interpolation for secrets (e.g., `${GITHUB_PERSONAL_ACCESS_TOKEN}`).
+## Connecting Your AI Tools
 
-## ⚙️ Configuration
+Once multi-mcp is running, replace all individual server entries in your tool configs with a single entry:
 
-The proxy is initialized using a JSON config (default: `./mcp.json`):
-
+**Claude Code / Cursor / any JSON-based config:**
 ```json
 {
   "mcpServers": {
-    "weather": {
-      "command": "python",
-      "args": ["./tools/get_weather.py"]
-    },
-    "calculator": {
-      "command": "python",
-      "args": ["./tools/calculator.py"]
+    "multi-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--project", "/path/to/multi-mcp", "python", "main.py", "start"]
     }
   }
 }
 ```
 
-This config defines the initial list of MCP-compatible servers to spawn and connect at startup.
-
-**Note:** Tool names are namespaced internally as `server_name::tool_name` to avoid conflicts and allow multiple servers to expose tools with the same base name. For example, if an MCP server named `calculator` provides an `add` tool, it will be referenced as `calculator::add`.
-
-You can also connect to a remote MCP server using SSE:
-
+**SSE mode (if running as a background service):**
 ```json
 {
   "mcpServers": {
-    "weather": {
-      "url": "http://127.0.0.1:9080/sse"
+    "multi-mcp": {
+      "type": "sse",
+      "url": "http://localhost:8085/sse"
     }
   }
 }
 ```
 
-More examples can be found in the [examples/config/](./examples/config/) directory.
+---
 
-## 🔄 Dynamic Server Management (SSE only)
+## Transport Support
 
-When running in SSE mode, you can **add/remove/list MCP servers at runtime** via HTTP endpoints:
+multi-mcp connects to backend servers over any transport:
 
-| Method | Endpoint               | Description                 |
-|--------|------------------------|-----------------------------|
-| `GET`  | `/mcp_servers`         | List active MCP servers     |
-| `POST` | `/mcp_servers`         | Add a new MCP server        |
-| `DELETE`| `/mcp_servers/{name}` | Remove an MCP server by name |
-| `GET`  | `/mcp_tools`           | Lists all available tools and their serves sources|
+| Transport | Backend config | Notes |
+|-----------|---------------|-------|
+| **stdio** | `command: /path/to/server` | Local subprocess |
+| **Streamable HTTP** | `url: https://...` | Current MCP spec (POST) |
+| **SSE** | `url: https://...` | Legacy SSE (GET), auto-fallback |
 
-### Example to add a new server:
+For `url`-based servers, multi-mcp tries Streamable HTTP first and falls back to legacy SSE automatically.
 
-```bash
-curl -X POST http://localhost:8080/mcp_servers \
-  -H "Content-Type: application/json" \
-  --data @add_server.json
-```
+---
 
-**add_server.json**:
+## Runtime API (SSE mode)
 
-```json
-{
-  "mcpServers": {
-    "unit_converter": {
-      "command": "python",
-      "args": ["./tools/unit_converter.py"]
-    }
-  }
-}
-```
-
-## 🐳 Docker
-
-You can containerize and run the SSE server in K8s:
+When running with `--transport sse`, a management API is available:
 
 ```bash
-# Build the image
-make docker-build
+# List active servers
+GET /mcp_servers
 
-# Run locally with port exposure
-make docker-run
+# Add a server at runtime
+POST /mcp_servers
+{"name": "new-server", "command": "/path/to/server"}
+
+# Remove a server
+DELETE /mcp_servers/{name}
+
+# List all tools by server
+GET /mcp_tools
+
+# Health check
+GET /health
 ```
 
-## Kubernetes
+Authenticate with `Authorization: Bearer <key>` (set `MULTI_MCP_API_KEY` env var to enable).
 
-You can deploy the proxy in a Kubernetes cluster using the provided manifests.
+---
 
-### Run with [Kind](https://kind.sigs.k8s.io/)
+## Architecture
 
-To run the proxy locally using Kind:
+```
+┌──────────────────────────────────────────────────┐
+│  Claude Code / Codex / Cursor / any MCP client   │
+└─────────────────────┬────────────────────────────┘
+                      │ stdio or SSE
+              ┌───────▼────────┐
+              │   multi-mcp    │
+              │                │
+              │ • YAML config  │
+              │ • namespacing  │
+              │ • tool filter  │
+              │ • lazy loading │
+              │ • audit log    │
+              └──┬──────┬──────┘
+                 │      │
+    ┌────────────┘      └──────────────┐
+    │                                  │
+┌───▼──────────┐              ┌────────▼──────┐
+│ always_on    │              │     lazy      │
+│              │              │               │
+│ github       │              │ exa (SSE)     │
+│ obsidian     │              │ tavily        │
+│              │              │ context7      │
+│ (connected   │              │ seq-thinking  │
+│  always)     │              │               │
+└──────────────┘              │ (connects on  │
+                              │  first call,  │
+                              │  disconnects  │
+                              │  after idle)  │
+                              └───────────────┘
+```
+
+---
+
+## Development
 
 ```bash
-kind create cluster --name multi-mcp-test
-kind load docker-image multi-mcp --name multi-mcp-test
-kubectl apply -f k8s/multi-mcp.yaml
-```
-### Exposing the Proxy
-The K8s manifest exposes the SSE server via a NodePort (30080 by default):
-You can then connect to the SSE endpoint from outside the cluster:
+# Run tests
+uv run python -m pytest
 
-```sh
-http://<kind-node-ip>:30080/sse
-```
-## Connecting to MCP Clients
-Once the proxy is running, you can connect to it using any MCP-compatible client — such as a LangGraph agent or custom MCP client.
+# Run specific test file
+uv run python -m pytest tests/test_cache_manager.py -v
 
-For example, using the langchain_mcp_adapters client, you can integrate directly with LangGraph to access tools from one or more backend MCP servers.
-
-See [`examples/connect_langgraph_client.py`](examples/connect_langgraph_client.py) for a working integration example.
-
-Make sure your environment is set up with:
-
-- An MCP-compatible client (e.g. LangGraph)
-
-- .env file containing:
-
-```env
-MODEL_NAME=<your-model-name>
-BASE_URL=<https://your-openai-base-url>
-OPENAI_API_KEY=<your-api-key>
+# Check what's configured
+uv run python main.py status
+uv run python main.py list
 ```
 
+**Test coverage:** 30 tests across YAML config, merge logic, startup discovery, idle timeout, startup flow, CLI, and reconnect behavior.
 
+---
 
-## Inspiration
+## Environment Variables
 
-This project is inspired by and builds on ideas from two excellent open-source MCP projects:
+| Variable | Description |
+|----------|-------------|
+| `MULTI_MCP_API_KEY` | Bearer token for SSE API auth |
+| `MULTI_MCP_HOST` | SSE bind host (default: `127.0.0.1`) |
+| `MULTI_MCP_PORT` | SSE bind port (default: `8085`) |
+| `MULTI_MCP_LOG_LEVEL` | Log level: DEBUG, INFO, WARNING, ERROR |
 
-- [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) by @sparfenyuk
-- [`fastmcp`](https://github.com/jlowin/fastmcp) by @jlowin
+---
 
+## License
+
+MIT

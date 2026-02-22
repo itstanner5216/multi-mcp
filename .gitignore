@@ -34,3 +34,10 @@ msc/**
 
 # Local Hive execution artifacts
 .hive/
+
+# Development artifacts
+claude/
+logs/
+TASK_*.md
+contextforplan/
+docs/plans/
