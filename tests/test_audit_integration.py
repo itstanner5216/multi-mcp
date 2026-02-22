@@ -31,6 +31,7 @@ def mock_client_manager():
     """Create a mock client manager."""
     manager = Mock(spec=MCPClientManager)
     manager.clients = {}
+    manager.pending_configs = {}
     return manager
 
 
@@ -59,7 +60,7 @@ class TestAuditIntegration:
             name="add", description="Add numbers", inputSchema={"type": "object"}
         )
 
-        proxy_with_audit.tool_to_server["calculator::add"] = ToolMapping(
+        proxy_with_audit.tool_to_server["calculator__add"] = ToolMapping(
             server_name="calculator", client=mock_client, tool=tool
         )
 
@@ -67,7 +68,7 @@ class TestAuditIntegration:
         request = types.CallToolRequest(
             method="tools/call",
             params=types.CallToolRequestParams(
-                name="calculator::add", arguments={"a": 5, "b": 3}
+                name="calculator__add", arguments={"a": 5, "b": 3}
             ),
         )
 
@@ -83,7 +84,7 @@ class TestAuditIntegration:
             entry = json.loads(f.readline())
 
         assert entry["event_type"] == "tool_call"
-        assert entry["tool_name"] == "calculator::add"
+        assert entry["tool_name"] == "calculator__add"
         assert entry["server_name"] == "calculator"
         assert entry["arguments"] == {"a": 5, "b": 3}
         assert entry["status"] == "success"
@@ -99,7 +100,7 @@ class TestAuditIntegration:
             name="broken", description="Broken tool", inputSchema={"type": "object"}
         )
 
-        proxy_with_audit.tool_to_server["test::broken"] = ToolMapping(
+        proxy_with_audit.tool_to_server["test__broken"] = ToolMapping(
             server_name="test", client=mock_client, tool=tool
         )
 
@@ -107,7 +108,7 @@ class TestAuditIntegration:
         request = types.CallToolRequest(
             method="tools/call",
             params=types.CallToolRequestParams(
-                name="test::broken", arguments={"arg": "value"}
+                name="test__broken", arguments={"arg": "value"}
             ),
         )
 
@@ -124,7 +125,7 @@ class TestAuditIntegration:
             entry = json.loads(f.readline())
 
         assert entry["event_type"] == "tool_call"
-        assert entry["tool_name"] == "test::broken"
+        assert entry["tool_name"] == "test__broken"
         assert entry["server_name"] == "test"
         assert entry["status"] == "error"
         assert "Connection timeout" in entry["error"]
@@ -135,7 +136,7 @@ class TestAuditIntegration:
         # Call non-existent tool
         request = types.CallToolRequest(
             method="tools/call",
-            params=types.CallToolRequestParams(name="nonexistent::tool", arguments={}),
+            params=types.CallToolRequestParams(name="nonexistent__tool", arguments={}),
         )
 
         result = await proxy_with_audit._call_tool(request)
@@ -151,7 +152,7 @@ class TestAuditIntegration:
             entry = json.loads(f.readline())
 
         assert entry["event_type"] == "tool_call"
-        assert entry["tool_name"] == "nonexistent::tool"
+        assert entry["tool_name"] == "nonexistent__tool"
         assert entry["server_name"] == "unknown"
         assert entry["status"] == "error"
         assert "not found" in entry["error"]

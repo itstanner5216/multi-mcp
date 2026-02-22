@@ -25,7 +25,7 @@ def mock_proxy_with_clients():
     proxy = MagicMock(spec=MCPProxyServer)
     client_manager = MagicMock(spec=MCPClientManager)
     client_manager.clients = {"server1": MagicMock(), "server2": MagicMock()}
-    # Task 05 will add pending_configs - for now it doesn't exist
+    client_manager.pending_configs = {}
     proxy.client_manager = client_manager
     return proxy
 
@@ -114,6 +114,7 @@ async def test_health_endpoint_zero_servers(multi_mcp):
     proxy = MagicMock(spec=MCPProxyServer)
     client_manager = MagicMock(spec=MCPClientManager)
     client_manager.clients = {}  # No clients
+    client_manager.pending_configs = {}
     proxy.client_manager = client_manager
     multi_mcp.proxy = proxy
 
