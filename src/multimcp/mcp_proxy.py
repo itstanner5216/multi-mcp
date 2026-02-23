@@ -55,9 +55,6 @@ class MCPProxyServer(server.Server):
         """
         from src.multimcp.cache_manager import get_enabled_tools
         for server_name, server_config in yaml_config.servers.items():
-            # Only pre-populate always_on servers; lazy servers appear after first connection
-            if not server_config.always_on:
-                continue
             # Don't overwrite entries already populated by live initialization
             existing_keys = {
                 k for k, v in self.tool_to_server.items()
