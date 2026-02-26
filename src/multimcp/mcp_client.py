@@ -241,7 +241,8 @@ class MCPClientManager:
                     await stack.aclose()
                 except Exception as e:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
-            self.pending_configs[name] = self.server_configs[name]
+            if name in self.server_configs:
+                self.pending_configs[name] = self.server_configs[name]
             if self._on_server_disconnected:
                 try:
                     await self._on_server_disconnected(name)
