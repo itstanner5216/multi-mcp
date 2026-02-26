@@ -33,6 +33,13 @@ class MCPClientManager:
         self.always_on_servers: Set[str] = set()
         self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
         self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
+        self._creation_locks: Dict[str, asyncio.Lock] = {}
+
+    def _get_creation_lock(self, name: str) -> asyncio.Lock:
+        """Get or create a per-server creation lock (lazily initialized)."""
+        if name not in self._creation_locks:
+            self._creation_locks[name] = asyncio.Lock()
+        return self._creation_locks[name]
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
@@ -69,6 +76,7 @@ class MCPClientManager:
     async def get_or_create_client(self, name: str) -> ClientSession:
         """
         Get an existing client or create it from pending configs on first access.
+        Uses a per-server lock to prevent race conditions on concurrent first-access.
 
         Args:
             name (str): Server name
@@ -79,27 +87,33 @@ class MCPClientManager:
         Raises:
             KeyError: If server is not found in clients or pending_configs
         """
-        # Return existing client if already connected
+        # Fast path: already connected (no lock needed)
         if name in self.clients:
             self.record_usage(name)
             return self.clients[name]
 
-        # Create from pending config if available
-        if name in self.pending_configs:
-            config = self.pending_configs.pop(name)
-            async with self._connection_semaphore:
-                try:
-                    await asyncio.wait_for(
-                        self._create_single_client(name, config),
-                        timeout=self._connection_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    self.logger.error(f"❌ Connection timeout for {name}")
-                    raise
-            self.record_usage(name)
-            return self.clients[name]
+        # Slow path: acquire per-server lock before creating
+        async with self._get_creation_lock(name):
+            # Re-check after acquiring lock (another coroutine may have connected)
+            if name in self.clients:
+                self.record_usage(name)
+                return self.clients[name]
 
-        raise KeyError(f"Unknown server: {name}")
+            if name in self.pending_configs:
+                config = self.pending_configs.pop(name)
+                async with self._connection_semaphore:
+                    try:
+                        await asyncio.wait_for(
+                            self._create_single_client(name, config),
+                            timeout=self._connection_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        self.logger.error(f"❌ Connection timeout for {name}")
+                        raise
+                self.record_usage(name)
+                return self.clients[name]
+
+            raise KeyError(f"Unknown server: {name}")
 
     async def discover_all(
         self, config: "MultiMCPConfig"
