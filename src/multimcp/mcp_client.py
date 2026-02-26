@@ -3,6 +3,9 @@ from typing import Dict, Optional, Set
 import os
 import asyncio
 import time
+import ipaddress
+import socket
+import urllib.parse
 
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -10,6 +13,79 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from src.utils.logger import get_logger
+
+
+# Default allowlist for command execution
+DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker"}
+
+# Env vars that cannot be overridden by server config
+PROTECTED_ENV_VARS = {"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "HOME", "USER", "PYTHONPATH", "PYTHONHOME"}
+
+# Private/internal IP ranges to block for SSRF
+_PRIVATE_RANGES = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _get_allowed_commands() -> set:
+    """Return the set of allowed commands, from env var or default."""
+    env_val = os.environ.get("MULTI_MCP_ALLOWED_COMMANDS", "")
+    if env_val.strip():
+        return {cmd.strip() for cmd in env_val.split(",") if cmd.strip()}
+    return DEFAULT_ALLOWED_COMMANDS
+
+
+def _validate_command(command: str) -> None:
+    """Raise ValueError if command is not in the allowed list."""
+    # Extract just the basename in case a full path is provided
+    cmd_name = os.path.basename(command)
+    allowed = _get_allowed_commands()
+    if cmd_name not in allowed:
+        raise ValueError(
+            f"Command '{command}' is not in the allowed commands list. "
+            f"Allowed: {sorted(allowed)}. "
+            f"Set MULTI_MCP_ALLOWED_COMMANDS to override."
+        )
+
+
+def _validate_url(url: str) -> None:
+    """Raise ValueError if URL is not safe (SSRF check)."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed. Only http/https permitted.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname.")
+
+    # Resolve hostname to IP address(es) to prevent DNS rebinding
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
+
+    for addrinfo in addrinfos:
+        ip_str = addrinfo[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        for private_range in _PRIVATE_RANGES:
+            if ip in private_range:
+                raise ValueError(
+                    f"URL '{url}' resolves to private/internal IP '{ip}' which is not allowed."
+                )
+
+
+def _filter_env(env: dict) -> dict:
+    """Remove protected env vars from the server-provided env dict."""
+    return {k: v for k, v in env.items() if k not in PROTECTED_ENV_VARS}
 
 
 class MCPClientManager:
@@ -194,8 +270,9 @@ class MCPClientManager:
             command = server_dict.get("command")
             args = server_dict.get("args", [])
             env = server_dict.get("env", {})
+            safe_env = _filter_env(env)
             merged_env = os.environ.copy()
-            merged_env.update(env)
+            merged_env.update(safe_env)
 
             params = StdioServerParameters(command=command, args=args, env=merged_env)
             read, write = await server_stack.enter_async_context(stdio_client(params))
@@ -280,8 +357,9 @@ class MCPClientManager:
                         url = server_config.get("url")
                         args = server_config.get("args", [])
                         env = server_config.get("env", {})
+                        safe_env = _filter_env(env)
                         merged_env = os.environ.copy()
-                        merged_env.update(env)
+                        merged_env.update(safe_env)
 
                         if command:
                             params = StdioServerParameters(command=command, args=args, env=merged_env)
@@ -322,10 +400,12 @@ class MCPClientManager:
             url = server.get("url")
             args = server.get("args", [])
             env = server.get("env", {})
-            merged_env = os.environ.copy()
-            merged_env.update(env)
 
             if command:
+                _validate_command(command)
+                safe_env = _filter_env(env)
+                merged_env = os.environ.copy()
+                merged_env.update(safe_env)
                 self.logger.info(f"🔌 Creating stdio client for {name}")
                 params = StdioServerParameters(
                     command=command,
@@ -338,6 +418,7 @@ class MCPClientManager:
                 )
 
             elif url:
+                _validate_url(url)
                 self.logger.info(f"🌐 Creating SSE client for {name}")
                 read, write = await server_stack.enter_async_context(sse_client(url=url))
                 session = await server_stack.enter_async_context(

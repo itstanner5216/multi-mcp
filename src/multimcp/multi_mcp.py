@@ -512,6 +512,10 @@ class MultiMCP:
 
                 return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
 
+            except ValueError as e:
+                # Security validation failure (command not allowed, SSRF attempt, etc.)
+                self.logger.warning(f"⚠️ Rejected /mcp_servers POST: {e}")
+                return JSONResponse({"error": str(e)}, status_code=403)
             except Exception as e:
                 self.logger.error(f"❌ Error adding MCP servers: {e}")
                 return JSONResponse(
