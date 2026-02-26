@@ -6,6 +6,7 @@ Following TDD: RED -> GREEN -> REFACTOR
 
 import pytest
 import json
+from unittest.mock import MagicMock, patch
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.mcp_proxy import MCPProxyServer
 from src.multimcp.multi_mcp import MultiMCP
@@ -132,8 +133,12 @@ class TestAutoEnableOnTrigger:
             },
         }
 
-        # Should detect trigger and attempt to enable
-        matched_servers = await trigger_mgr.check_and_enable(message)
+        # Mock _create_single_client so we don't actually spawn a subprocess
+        async def fake_create(name, config):
+            manager.clients[name] = MagicMock()
+
+        with patch.object(manager, "_create_single_client", side_effect=fake_create):
+            matched_servers = await trigger_mgr.check_and_enable(message)
 
         assert "github" in matched_servers
 
@@ -199,7 +204,12 @@ class TestAutoEnableOnTrigger:
             "params": {"arguments": {"query": "Check github for sentry error logs"}},
         }
 
-        matched_servers = await trigger_mgr.check_and_enable(message)
+        # Mock _create_single_client so we don't actually spawn subprocesses
+        async def fake_create(name, config):
+            manager.clients[name] = MagicMock()
+
+        with patch.object(manager, "_create_single_client", side_effect=fake_create):
+            matched_servers = await trigger_mgr.check_and_enable(message)
 
         assert "github" in matched_servers
         assert "sentry" in matched_servers
