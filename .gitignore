@@ -41,3 +41,4 @@ logs/
 TASK_*.md
 contextforplan/
 docs/plans/
+.worktrees/
