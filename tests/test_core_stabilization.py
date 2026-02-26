@@ -311,9 +311,9 @@ async def test_resource_uri_with_separator_is_escaped():
 
         proxy = await MCPProxyServer.create(client_manager)
 
-        # Check that key uses name, not URI (which contains ::)
+        # Resources are stored by raw URI (globally unique, no namespacing)
         assert len(proxy.resource_to_server) == 1
         keys = list(proxy.resource_to_server.keys())
-        assert keys[0] == "URIServer__safe_name", (
-            f"Key should use name, not URI. Got: {keys[0]}"
+        assert keys[0] == "file:///path::with::separator", (
+            f"Key should be raw URI. Got: {keys[0]}"
         )
