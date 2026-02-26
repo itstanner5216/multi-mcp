@@ -153,7 +153,13 @@ class MultiMCP:
         return normalized
 
     def _scan_claude_plugins(self) -> dict[str, dict]:
-        """Scan Claude Code plugin cache for active MCP server configs."""
+        """Scan Claude Code plugin cache for active MCP server configs.
+        
+        NOTE: This method is Claude Code-specific. It reads from ~/.claude/plugins/cache
+        and ~/.claude/settings.local.json, which only exist when running inside
+        Claude Code (Anthropic's coding assistant). This behavior is controlled by the
+        'scan_claude_plugins' config flag and is safe to ignore in other environments.
+        """
         plugins_dir = Path.home() / ".claude" / "plugins" / "cache"
         settings_path = Path.home() / ".claude" / "settings.local.json"
         if not plugins_dir.exists():
@@ -281,6 +287,10 @@ class MultiMCP:
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
 
         # Register ALL servers as pending — proxy starts instantly from YAML cache
+        # NOTE(M10): model_dump(exclude_none=True) strips fields set to None.
+        # This is intentional for server configs — None fields like 'url' for stdio
+        # servers should not be passed to the client manager. If a field is explicitly
+        # set to None and needs to be preserved, use exclude_unset=True instead.
         for server_name, server_config in yaml_config.servers.items():
             server_dict = server_config.model_dump(exclude_none=True)
             self.client_manager.add_pending_server(server_name, server_dict)

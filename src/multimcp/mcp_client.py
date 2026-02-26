@@ -408,6 +408,11 @@ class MCPClientManager:
             return {}
 
         # Eager mode: connect immediately (existing behavior)
+        # NOTE(M4): The stack is shared across all server connections.
+        # This means if ANY server fails during cleanup, it can affect other servers.
+        # A future improvement would be per-server AsyncExitStack instances for
+        # full isolation, but the shared stack works for now since server failures
+        # are caught individually during creation below.
         await self.stack.__aenter__()  # manually enter the stack once
 
         for name, server in config.get("mcpServers", {}).items():

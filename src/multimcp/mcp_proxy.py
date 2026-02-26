@@ -615,7 +615,14 @@ class MCPProxyServer(server.Server):
         initialization_options,
         raise_exceptions: bool = False,
     ):
-        """Override run to capture the server session for notifications."""
+        """Override run to capture the server session for notifications.
+        
+        NOTE(M8): This method intentionally does NOT call super().run().
+        Instead, it reimplements the session lifecycle to capture the ServerSession
+        reference needed for sending tool/prompt/resource list_changed notifications.
+        The base class run() doesn't expose the session object, so we must manage
+        the session context directly to retain a reference in self._server_session.
+        """
         # Import here to avoid circular dependencies
         from mcp.server.session import ServerSession
         from contextlib import AsyncExitStack
