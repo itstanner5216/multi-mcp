@@ -431,11 +431,21 @@ class MultiMCP:
         async def auth_mcp_control(request):
             return await self._auth_wrapper(self.handle_mcp_control, request)
 
+        async def auth_post_message(scope, receive, send):
+            """Auth-protected wrapper around sse.handle_post_message."""
+            if scope["type"] == "http":
+                request = Request(scope, receive)
+                auth_error = self._check_auth(request)
+                if auth_error:
+                    await auth_error(scope, receive, send)
+                    return
+            await sse.handle_post_message(scope, receive, send)
+
         starlette_app = Starlette(
             debug=self.settings.sse_server_debug,
             routes=[
                 Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
+                Mount("/messages/", app=auth_post_message),
                 # Dynamic endpoints with auth
                 Route(
                     "/mcp_servers",
