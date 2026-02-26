@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 import yaml
 from pydantic import BaseModel, Field
 
@@ -16,10 +16,11 @@ class ServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: Optional[str] = None
-    type: str = "stdio"
+    type: Literal["stdio", "sse", "streamablehttp"] = "stdio"
     always_on: bool = False
     idle_timeout_minutes: int = 5
     tools: dict[str, ToolEntry] = Field(default_factory=dict)
+    triggers: list[dict] = Field(default_factory=list)
 
 
 class MultiMCPConfig(BaseModel):
