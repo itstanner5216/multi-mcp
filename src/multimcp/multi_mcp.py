@@ -44,6 +44,19 @@ class MultiMCP:
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
         self.client_manager = MCPClientManager()
+        self._bg_tasks: list[asyncio.Task] = []
+
+    def _track_task(self, coro, name: str) -> asyncio.Task:
+        task = asyncio.create_task(coro, name=name)
+        self._bg_tasks.append(task)
+        task.add_done_callback(self._on_task_done)
+        return task
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        if task in self._bg_tasks:
+            self._bg_tasks.remove(task)
+        if not task.cancelled() and task.exception():
+            self.logger.error(f"❌ Background task '{task.get_name()}' failed: {task.exception()}")
 
     @property
     def auth_enabled(self) -> bool:
@@ -145,7 +158,10 @@ class MultiMCP:
                 continue
             if "command" in srv and isinstance(srv["command"], list):
                 cmd_list = srv["command"]
-                srv = {**srv, "command": cmd_list[0], "args": cmd_list[1:]}
+                if cmd_list:
+                    srv = {**srv, "command": cmd_list[0], "args": cmd_list[1:]}
+                else:
+                    continue  # Skip entries with empty command list
             normalized[name] = srv
         return normalized
 
@@ -196,7 +212,7 @@ class MultiMCP:
         """Return server configs not already in YAML.
 
         Priority:
-        1. msc/mcp.json exists → sole source (no auto-discovery)
+        1. mcp.json exists → sole source (no auto-discovery)
         2. Otherwise → scan config.sources paths + Claude plugin cache
         """
         all_json_servers: dict[str, dict] = {}
@@ -240,7 +256,9 @@ class MultiMCP:
             plugin_servers = self._scan_claude_plugins()
             if plugin_servers:
                 self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
-                all_json_servers.update(plugin_servers)
+                for name, srv in plugin_servers.items():
+                    if name not in all_json_servers:
+                        all_json_servers[name] = srv
 
         new_servers = {}
         for name, srv in all_json_servers.items():
@@ -283,7 +301,7 @@ class MultiMCP:
             self.client_manager.add_pending_server(server_name, server_dict)
 
         # Start idle checker background task
-        asyncio.create_task(self.client_manager.start_idle_checker())
+        self._track_task(self.client_manager.start_idle_checker(), "idle-checker")
 
         # Build config dict for watchdog reconnects
         always_on_configs = {
@@ -291,7 +309,7 @@ class MultiMCP:
             for name, srv in yaml_config.servers.items()
             if srv.always_on
         }
-        asyncio.create_task(self.client_manager.start_always_on_watchdog(always_on_configs))
+        self._track_task(self.client_manager.start_always_on_watchdog(always_on_configs), "always-on-watchdog")
 
         # Background: connect always_on servers after proxy starts
         async def _connect_always_on() -> None:
@@ -315,10 +333,13 @@ class MultiMCP:
             self.proxy.load_tools_from_yaml(yaml_config)
 
             # Connect always_on servers in background (don't block startup)
-            asyncio.create_task(_connect_always_on())
+            self._track_task(_connect_always_on(), "connect-always-on")
 
             await self.start_server()
         finally:
+            for task in self._bg_tasks:
+                task.cancel()
+            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
             await self.client_manager.close()
 
     def load_mcp_config(self, path=None):
