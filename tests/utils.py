@@ -1,14 +1,24 @@
 import os
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
-from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
+
+try:
+    from langgraph.prebuilt import create_react_agent
+except ImportError:
+    create_react_agent = None
+
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    ChatOpenAI = None
 
 load_dotenv()
 
 
-def get_chat_model() -> ChatOpenAI:
+def get_chat_model() -> "ChatOpenAI":
     """Initialize and return a ChatOpenAI model from environment settings."""
+    if ChatOpenAI is None:
+        raise ImportError("langchain-openai is required: pip install langchain-openai")
     return ChatOpenAI(
         model=os.environ.get("MODEL_NAME"),
         base_url=os.environ["BASE_URL"],
@@ -26,6 +36,8 @@ async def run_e2e_test_with_client(client: MultiServerMCPClient, expected_tools:
     for tool in expected_tools:
         assert tool in tool_names, f"Expected '{tool}' tool to be available"
 
+    if create_react_agent is None:
+        raise ImportError("langgraph is required: pip install langgraph")
     agent = create_react_agent(get_chat_model(), tools)
 
     for question, expected_answer in test_prompts:

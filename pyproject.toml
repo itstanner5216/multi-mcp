@@ -20,6 +20,15 @@ dependencies = [
     "langchain-mcp-adapters",
 ]
 
+[project.optional-dependencies]
+test = [
+    "langgraph",
+    "langchain-openai",
+    "python-dotenv",
+    "pytest",
+    "pytest-asyncio",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
