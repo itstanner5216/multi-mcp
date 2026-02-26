@@ -17,6 +17,20 @@ class ToolMapping:
     tool: types.Tool
 
 
+@dataclass
+class PromptMapping:
+    server_name: str
+    client: Optional[ClientSession]
+    prompt: types.Prompt
+
+
+@dataclass
+class ResourceMapping:
+    server_name: str
+    client: Optional[ClientSession]
+    resource: types.Resource
+
+
 class MCPProxyServer(server.Server):
     """An MCP Proxy Server that forwards requests to remote MCP servers."""
 
@@ -26,8 +40,8 @@ class MCPProxyServer(server.Server):
         self.tool_to_server: dict[
             str, ToolMapping
         ] = {}  # Support same tool name in different mcp server
-        self.prompt_to_server: dict[str, ClientSession] = {}
-        self.resource_to_server: dict[str, ClientSession] = {}
+        self.prompt_to_server: dict[str, PromptMapping] = {}
+        self.resource_to_server: dict[str, ResourceMapping] = {}
         self._register_lock = asyncio.Lock()  # Lock for concurrent register/unregister
         self._register_request_handlers()
         self.logger = get_logger("multi_mcp.ProxyServer")
@@ -115,7 +129,9 @@ class MCPProxyServer(server.Server):
                     if "__" in prompt.name:
                         continue
                     key = self._make_key(name, prompt.name)
-                    self.prompt_to_server[key] = client
+                    self.prompt_to_server[key] = PromptMapping(
+                        server_name=name, client=client, prompt=prompt
+                    )
             except Exception as e:
                 self.logger.warning(f"⚠️ '{name}' advertises prompts but list_prompts failed: {e}")
 
@@ -127,7 +143,9 @@ class MCPProxyServer(server.Server):
                     if "__" in resource_key:
                         continue
                     key = self._make_key(name, resource_key)
-                    self.resource_to_server[key] = client
+                    self.resource_to_server[key] = ResourceMapping(
+                        server_name=name, client=client, resource=resource
+                    )
             except Exception as e:
                 self.logger.warning(f"⚠️ '{name}' advertises resources but list_resources failed: {e}")
 
@@ -137,10 +155,14 @@ class MCPProxyServer(server.Server):
             self.client_manager.clients[name] = client
             # Re-fetch capabilities (like on startup)
             await self.initialize_single_client(name, client)
-            # Send notification if server has tools capability
+            # Send notifications for changed capabilities
             caps = self.capabilities.get(name)
             if caps and caps.tools:
                 await self._send_tools_list_changed()
+            if caps and caps.prompts:
+                await self._send_prompts_list_changed()
+            if caps and caps.resources:
+                await self._send_resources_list_changed()
 
     async def unregister_client(self, name: str) -> None:
         """Remove a client and clean up all its associated mappings."""
@@ -164,18 +186,23 @@ class MCPProxyServer(server.Server):
                 k: v for k, v in self.tool_to_server.items() if v.client != client
             }
             self.prompt_to_server = {
-                k: v for k, v in self.prompt_to_server.items() if v != client
+                k: v for k, v in self.prompt_to_server.items() if v.client != client
             }
             self.resource_to_server = {
-                k: v for k, v in self.resource_to_server.items() if v != client
+                k: v for k, v in self.resource_to_server.items() if v.client != client
             }
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
 
-            # Send notification if client had tools capability
+            # Send notifications for removed capabilities
             if had_tools:
                 await self._send_tools_list_changed()
-
+            had_prompts = caps and caps.prompts if caps else False
+            if had_prompts:
+                await self._send_prompts_list_changed()
+            had_resources = caps and caps.resources if caps else False
+            if had_resources:
+                await self._send_resources_list_changed()
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
@@ -287,23 +314,12 @@ class MCPProxyServer(server.Server):
 
     ## Prompts capabilities
     async def _list_prompts(self, _: Any) -> types.ServerResult:
-        """Aggregate prompts from all remote MCP servers and return a combined list with namespacing."""
+        """Return cached prompts from all remote MCP servers with namespacing."""
         all_prompts = []
-        for name, client in self.client_manager.clients.items():
-            # Only call servers that support prompts capability
-            caps = self.capabilities.get(name)
-            if not caps or not caps.prompts:
-                continue
-            try:
-                prompts_result = await client.list_prompts()
-                # Namespace each prompt
-                for prompt in prompts_result.prompts:
-                    namespaced_prompt = prompt.model_copy()
-                    namespaced_prompt.name = self._make_key(name, prompt.name)
-                    all_prompts.append(namespaced_prompt)
-            except Exception as e:
-                self.logger.error(f"Error fetching prompts from {name}: {e}")
-
+        for key, mapping in self.prompt_to_server.items():
+            namespaced_prompt = mapping.prompt.model_copy()
+            namespaced_prompt.name = key
+            all_prompts.append(namespaced_prompt)
         return types.ServerResult(prompts=all_prompts)
 
     async def _get_prompt(self, req: types.GetPromptRequest) -> types.ServerResult:
@@ -355,24 +371,12 @@ class MCPProxyServer(server.Server):
 
     ## Resources capabilities
     async def _list_resources(self, _: Any) -> types.ServerResult:
-        """Aggregate resources from all remote MCP servers and return a combined list with namespacing."""
+        """Return cached resources from all remote MCP servers with namespacing."""
         all_resources = []
-        for name, client in self.client_manager.clients.items():
-            # Only call servers that support resources capability
-            caps = self.capabilities.get(name)
-            if not caps or not caps.resources:
-                continue
-            try:
-                resources_result = await client.list_resources()
-                # Namespace each resource using its name (or URI as fallback)
-                for resource in resources_result.resources:
-                    namespaced_resource = resource.model_copy()
-                    resource_key = resource.name if resource.name else resource.uri
-                    namespaced_resource.name = self._make_key(name, resource_key)
-                    all_resources.append(namespaced_resource)
-            except Exception as e:
-                self.logger.error(f"Error fetching resources from {name}: {e}")
-
+        for key, mapping in self.resource_to_server.items():
+            namespaced_resource = mapping.resource.model_copy()
+            namespaced_resource.name = key
+            all_resources.append(namespaced_resource)
         return types.ServerResult(resources=all_resources)
 
     async def _read_resource(
@@ -572,6 +576,36 @@ class MCPProxyServer(server.Server):
         else:
             self.logger.debug(
                 "⚠️ No active session to send tools/list_changed notification"
+            )
+
+    async def _send_prompts_list_changed(self) -> None:
+        """Send prompts/list_changed notification if a session is active."""
+        if self._server_session:
+            try:
+                await self._server_session.send_prompts_list_changed()
+                self.logger.info("📢 Sent prompts/list_changed notification")
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to send prompts/list_changed notification: {e}"
+                )
+        else:
+            self.logger.debug(
+                "⚠️ No active session to send prompts/list_changed notification"
+            )
+
+    async def _send_resources_list_changed(self) -> None:
+        """Send resources/list_changed notification if a session is active."""
+        if self._server_session:
+            try:
+                await self._server_session.send_resources_list_changed()
+                self.logger.info("📢 Sent resources/list_changed notification")
+            except Exception as e:
+                self.logger.error(
+                    f"❌ Failed to send resources/list_changed notification: {e}"
+                )
+        else:
+            self.logger.debug(
+                "⚠️ No active session to send resources/list_changed notification"
             )
 
     async def run(
