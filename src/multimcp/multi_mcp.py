@@ -73,6 +73,9 @@ class MultiMCP:
                 self.client_manager.tool_filters[server_name] = {
                     "allow": list(enabled), "deny": []
                 }
+            else:
+                # All tools disabled — explicit deny-all filter
+                self.client_manager.tool_filters[server_name] = {"allow": [], "deny": ["*"]}
             self.client_manager.idle_timeouts[server_name] = (
                 server_config.idle_timeout_minutes * 60
             )

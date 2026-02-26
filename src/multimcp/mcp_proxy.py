@@ -541,9 +541,11 @@ class MCPProxyServer(server.Server):
         if filter_config is None:
             return True
         deny = filter_config.get("deny", [])
-        if tool_name in deny:
+        if "*" in deny or tool_name in deny:
             return False
         allow = filter_config.get("allow", ["*"])
+        if not allow:   # Empty allow list = deny all
+            return False
         return "*" in allow or tool_name in allow
 
     @staticmethod
