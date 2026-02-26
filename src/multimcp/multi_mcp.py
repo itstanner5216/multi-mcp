@@ -317,6 +317,18 @@ class MultiMCP:
             # Pre-populate tool list from YAML cache so tools are visible immediately
             self.proxy.load_tools_from_yaml(yaml_config)
 
+            # Register watchdog callback so proxy tool mappings are refreshed after reconnect
+            async def _on_server_reconnected(server_name: str, client) -> None:
+                """Called by watchdog after reconnect — refresh proxy tool mappings."""
+                try:
+                    await self.proxy.initialize_single_client(server_name, client)
+                    await self.proxy._send_tools_list_changed()
+                    self.logger.info(f"✅ Proxy updated after watchdog reconnect of '{server_name}'")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to update proxy after reconnect of '{server_name}': {e}")
+
+            self.client_manager.on_server_reconnected = _on_server_reconnected
+
             # Connect always_on servers in background (don't block startup)
             asyncio.create_task(_connect_always_on())
 

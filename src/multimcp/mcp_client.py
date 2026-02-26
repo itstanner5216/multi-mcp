@@ -1,5 +1,5 @@
 from contextlib import AsyncExitStack
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 import os
 import asyncio
 import time
@@ -110,6 +110,7 @@ class MCPClientManager:
         self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
         self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
         self._creation_locks: Dict[str, asyncio.Lock] = {}
+        self.on_server_reconnected: Optional[Any] = None  # async callable(server_name, client)
 
     def _get_creation_lock(self, name: str) -> asyncio.Lock:
         """Get or create a per-server creation lock (lazily initialized)."""
@@ -305,6 +306,48 @@ class MCPClientManager:
                 pass
             return []
 
+    async def _connect_url_server(
+        self,
+        name: str,
+        url: str,
+        env: dict,
+        server_stack: AsyncExitStack,
+        server_config: Optional[Any] = None,
+    ) -> ClientSession:
+        """Connect to a URL-based MCP server using the correct transport.
+
+        Respects server_config.type if set to 'sse' (skips Streamable HTTP).
+        Otherwise tries Streamable HTTP first, falls back to legacy SSE.
+
+        Uses a nested stack for the Streamable HTTP attempt so that a failed
+        attempt is cleaned up safely before falling through to SSE.
+        """
+        transport_type = getattr(server_config, 'type', None) if server_config else None
+
+        if transport_type != 'sse':
+            # Try Streamable HTTP in a temporary nested stack for safe fallback
+            fallback_stack = AsyncExitStack()
+            try:
+                await fallback_stack.__aenter__()
+                read, write, _ = await fallback_stack.enter_async_context(
+                    streamable_http_client(url)
+                )
+                client = await fallback_stack.enter_async_context(ClientSession(read, write))
+                # Success: absorb the nested stack into the main server_stack for proper cleanup
+                await server_stack.enter_async_context(fallback_stack)
+                self.logger.info(f"🌐 Connected to '{name}' via Streamable HTTP")
+                return client
+            except Exception as e:
+                await fallback_stack.aclose()
+                self.logger.debug(f"Streamable HTTP failed for '{name}', trying SSE: {e}")
+
+        # Use legacy SSE (fallback or explicit)
+        read, write = await server_stack.enter_async_context(sse_client(url=url))
+        client = await server_stack.enter_async_context(ClientSession(read, write))
+        mode = "explicit" if transport_type == 'sse' else "fallback"
+        self.logger.info(f"🌐 Connected to '{name}' via SSE ({mode})")
+        return client
+
     def record_usage(self, server_name: str) -> None:
         """Update last-used timestamp for a server."""
         self.last_used[server_name] = time.monotonic()
@@ -364,17 +407,24 @@ class MCPClientManager:
                         if command:
                             params = StdioServerParameters(command=command, args=args, env=merged_env)
                             read, write = await server_stack.enter_async_context(stdio_client(params))
+                            client = await server_stack.enter_async_context(ClientSession(read, write))
                         elif url:
-                            read, write = await server_stack.enter_async_context(sse_client(url=url))
+                            client = await self._connect_url_server(name, url, env, server_stack)
                         else:
                             await server_stack.aclose()
                             continue
 
-                        client = await server_stack.enter_async_context(ClientSession(read, write))
                         await client.initialize()
                         self.clients[name] = client
                         self.server_stacks[name] = server_stack
                         self.logger.info(f"✅ Reconnected always-on server '{name}'")
+
+                        # Notify proxy so it can update tool mappings
+                        if self.on_server_reconnected:
+                            try:
+                                await self.on_server_reconnected(name, client)
+                            except Exception as cb_err:
+                                self.logger.warning(f"⚠️ on_server_reconnected callback failed for '{name}': {cb_err}")
                     except Exception as e:
                         self.logger.error(f"❌ Failed to reconnect '{name}': {e}")
                         try:
@@ -419,11 +469,7 @@ class MCPClientManager:
 
             elif url:
                 _validate_url(url)
-                self.logger.info(f"🌐 Creating SSE client for {name}")
-                read, write = await server_stack.enter_async_context(sse_client(url=url))
-                session = await server_stack.enter_async_context(
-                    ClientSession(read, write)
-                )
+                session = await self._connect_url_server(name, url, env, server_stack)
 
             else:
                 self.logger.warning(f"⚠️ Skipping {name}: No command or URL provided.")
