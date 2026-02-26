@@ -26,6 +26,7 @@ class MCPClientManager:
         self.clients: Dict[str, ClientSession] = {}
         self.server_stacks: Dict[str, AsyncExitStack] = {}
         self.pending_configs: Dict[str, dict] = {}
+        self.server_configs: Dict[str, dict] = {}
         self.tool_filters: Dict[str, Optional[dict]] = {}
         self._connection_semaphore = asyncio.Semaphore(max_concurrent_connections)
         self._connection_timeout = connection_timeout
@@ -62,7 +63,8 @@ class MCPClientManager:
             name (str): Server name
             config (dict): Server configuration (command/url, args, env, etc.)
         """
-        self.tool_filters[name] = self._parse_tool_filter(config)
+        self.tool_filters.setdefault(name, self._parse_tool_filter(config))
+        self.server_configs[name] = config
         self.pending_configs[name] = config
         self.logger.info(f"📋 Added pending server: {name}")
 
@@ -237,6 +239,7 @@ class MCPClientManager:
                     await stack.aclose()
                 except Exception as e:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
+            self.pending_configs[name] = self.server_configs[name]
 
     async def start_idle_checker(self, interval_seconds: float = 60.0) -> None:
         """Background task: periodically disconnect idle lazy servers."""
@@ -395,4 +398,10 @@ class MCPClientManager:
         """
         Closes all clients and releases resources managed by the async context stack.
         """
+        for name, server_stack in list(self.server_stacks.items()):
+            try:
+                await server_stack.aclose()
+            except Exception as e:
+                self.logger.warning(f"⚠️ Error closing server stack for '{name}': {e}")
+        self.server_stacks.clear()
         await self.stack.aclose()
