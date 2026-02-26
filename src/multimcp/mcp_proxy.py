@@ -126,8 +126,8 @@ class MCPProxyServer(server.Server):
                     resource_key = resource.name if resource.name else resource.uri
                     if "__" in resource_key:
                         continue
-                    key = self._make_key(name, resource_key)
-                    self.resource_to_server[key] = client
+                    uri_str = str(resource.uri)
+                    self.resource_to_server[uri_str] = client
             except Exception as e:
                 self.logger.warning(f"⚠️ '{name}' advertises resources but list_resources failed: {e}")
 
@@ -180,7 +180,7 @@ class MCPProxyServer(server.Server):
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
         and updated dynamically when servers are added/removed."""
-        all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
+        all_tools = [mapping.tool for mapping in self.tool_to_server.values() if mapping.client is not None]
         return types.ServerResult(tools=all_tools)
 
     async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
@@ -216,6 +216,7 @@ class MCPProxyServer(server.Server):
                     self.logger.info(f"🔌 Connecting '{tool_item.server_name}' on first tool call...")
                     client = await self.client_manager.get_or_create_client(tool_item.server_name)
                     await self.initialize_single_client(tool_item.server_name, client)
+                    await self._send_tools_list_changed()
                     tool_item = self.tool_to_server.get(tool_name)
                 except Exception as e:
                     return types.ServerResult(
@@ -313,7 +314,8 @@ class MCPProxyServer(server.Server):
 
         if client:
             try:
-                result = await client.get_prompt(req.params)
+                _, original_name = self._split_key(prompt_name)
+                result = await client.get_prompt(original_name, req.params.arguments)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to get prompt '{prompt_name}': {e}")
@@ -331,12 +333,19 @@ class MCPProxyServer(server.Server):
 
     async def _complete(self, req: types.CompleteRequest) -> types.ServerResult:
         """Execute a prompt completion on the relevant MCP server."""
-        prompt_name = req.params.prompt
-        client = self.prompt_to_server.get(prompt_name)
+        prompt_name = None
+        client = None
+        if hasattr(req.params.ref, 'name'):
+            prompt_name = req.params.ref.name
+            client = self.prompt_to_server.get(prompt_name)
 
         if client:
             try:
-                result = await client.complete(req.params)
+                ref = req.params.ref
+                if hasattr(ref, 'name'):
+                    _, original_name = self._split_key(ref.name)
+                    ref = ref.model_copy(update={"name": original_name})
+                result = await client.complete(ref, req.params.argument)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to complete prompt '{prompt_name}': {e}")
@@ -380,11 +389,11 @@ class MCPProxyServer(server.Server):
     ) -> types.ServerResult:
         """Read a resource from the appropriate backend MCP server."""
         resource_uri = req.params.uri
-        client = self.resource_to_server.get(resource_uri)
+        client = self.resource_to_server.get(str(resource_uri))
 
         if client:
             try:
-                result = await client.read_resource(req.params)
+                result = await client.read_resource(req.params.uri)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to read resource '{resource_uri}': {e}")
@@ -405,7 +414,7 @@ class MCPProxyServer(server.Server):
     ) -> types.ServerResult:
         """Subscribe to a resource for updates on a backend MCP server."""
         uri = req.params.uri
-        client = self.resource_to_server.get(uri)
+        client = self.resource_to_server.get(str(uri))
 
         if client:
             try:
@@ -430,7 +439,7 @@ class MCPProxyServer(server.Server):
     ) -> types.ServerResult:
         """Unsubscribe from a previously subscribed resource."""
         uri = req.params.uri
-        client = self.resource_to_server.get(uri)
+        client = self.resource_to_server.get(str(uri))
 
         if client:
             try:
