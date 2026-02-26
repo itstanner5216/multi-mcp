@@ -570,9 +570,10 @@ class MCPProxyServer(server.Server):
 
     async def _on_server_disconnected(self, server_name: str) -> None:
         """Reset tool mappings for a disconnected server and notify client."""
-        for key, mapping in self.tool_to_server.items():
-            if mapping.server_name == server_name:
-                mapping.client = None
+        async with self._register_lock:
+            for key, mapping in self.tool_to_server.items():
+                if mapping.server_name == server_name:
+                    mapping.client = None
         await self._send_tools_list_changed()
         self.logger.info(f"🔄 Reset tool mappings for disconnected server '{server_name}'")
 

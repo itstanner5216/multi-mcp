@@ -337,9 +337,9 @@ class MultiMCP:
 
             await self.start_server()
         finally:
-            for task in self._bg_tasks:
+            for task in list(self._bg_tasks):
                 task.cancel()
-            await asyncio.gather(*self._bg_tasks, return_exceptions=True)
+            await asyncio.gather(*list(self._bg_tasks), return_exceptions=True)
             await self.client_manager.close()
 
     def load_mcp_config(self, path=None):
