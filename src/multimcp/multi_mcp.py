@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import os
 import uvicorn
 import json
@@ -337,42 +338,45 @@ class MultiMCP:
     def _check_auth(self, request: Request) -> Optional[JSONResponse]:
         """
         Check if request is authenticated.
-
+        
+        Accepts Authorization: Bearer <token> header (preferred) or
+        ?token=<key> query parameter (deprecated fallback for SSE).
         Returns None if authenticated, JSONResponse with 401 if not.
         """
         if not self.auth_enabled:
             return None  # Auth disabled, allow request
 
-        # For SSE endpoint, check query parameter
+        # Try Authorization header first (preferred for all endpoints)
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    {
+                        "error": "Unauthorized: Invalid Authorization format (expected 'Bearer <token>')"
+                    },
+                    status_code=401,
+                )
+            token = auth_header[7:]  # Remove "Bearer " prefix
+            if hmac.compare_digest(token, self.settings.api_key):
+                return None  # Valid token
+            return JSONResponse({"error": "Unauthorized: Invalid API key"}, status_code=401)
+
+        # Deprecated fallback: query parameter for SSE endpoint
         if request.url.path == "/sse":
             token = request.query_params.get("token")
-            if token == self.settings.api_key:
-                return None  # Valid token
+            if token and hmac.compare_digest(token, self.settings.api_key):
+                self.logger.warning(
+                    "⚠️ SSE auth via query parameter is deprecated. Use 'Authorization: Bearer <token>' header instead."
+                )
+                return None  # Valid token (deprecated path)
             return JSONResponse(
                 {"error": "Unauthorized: Invalid or missing token"}, status_code=401
             )
 
-        # For HTTP endpoints, check Authorization header
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            return JSONResponse(
-                {"error": "Unauthorized: Missing Authorization header"}, status_code=401
-            )
-
-        # Check Bearer token format
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {
-                    "error": "Unauthorized: Invalid Authorization format (expected 'Bearer <token>')"
-                },
-                status_code=401,
-            )
-
-        token = auth_header[7:]  # Remove "Bearer " prefix
-        if token == self.settings.api_key:
-            return None  # Valid token
-
-        return JSONResponse({"error": "Unauthorized: Invalid API key"}, status_code=401)
+        # Non-SSE endpoints require Authorization header
+        return JSONResponse(
+            {"error": "Unauthorized: Missing Authorization header"}, status_code=401
+        )
 
     async def _auth_wrapper(self, handler, request: Request):
         """Wrapper to apply authentication check to endpoint handlers."""
