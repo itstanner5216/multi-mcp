@@ -31,6 +31,7 @@ class MCPSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
+    debug: bool = False  # Expose exception details in error responses (env: MULTI_MCP_DEBUG)
     config: Optional[str] = None
     api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
 
@@ -509,7 +510,11 @@ class MultiMCP:
                 return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
 
             except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+                self.logger.error(f"❌ Error adding MCP servers: {e}")
+                return JSONResponse(
+                    {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                    status_code=500,
+                )
 
         elif method == "DELETE":
             name = request.path_params.get("name")
@@ -530,7 +535,11 @@ class MultiMCP:
                     {"message": f"Client '{name}' removed successfully"}
                 )
             except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+                self.logger.error(f"❌ Error removing MCP server '{name}': {e}")
+                return JSONResponse(
+                    {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                    status_code=500,
+                )
 
         return JSONResponse({"error": f"Unsupported method: {method}"}, status_code=405)
 
@@ -546,12 +555,17 @@ class MultiMCP:
                     tools = await client.list_tools()
                     tools_by_server[server_name] = [tool.name for tool in tools.tools]
                 except Exception as e:
-                    tools_by_server[server_name] = f"❌ Error: {str(e)}"
+                    self.logger.error(f"❌ Error listing tools for server '{server_name}': {e}")
+                    tools_by_server[server_name] = {"error": "Tool listing failed", "detail": str(e) if self.settings.debug else None}
 
             return JSONResponse({"tools": tools_by_server})
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_mcp_tools: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )
 
     async def handle_health(self, request: Request) -> JSONResponse:
         """Return health status with connected and pending server counts."""
@@ -577,7 +591,11 @@ class MultiMCP:
             )
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_health: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )
 
     async def handle_mcp_control(self, request: Request) -> JSONResponse:
         """Handle POST /mcp_control for manual server enable/disable."""
@@ -621,8 +639,10 @@ class MultiMCP:
                         {"message": f"Server '{server_name}' enabled successfully"}
                     )
                 except Exception as e:
+                    self.logger.error(f"❌ Failed to enable server '{server_name}': {e}")
                     return JSONResponse(
-                        {"error": f"Failed to enable server: {str(e)}"}, status_code=500
+                        {"error": "Failed to enable server", "detail": str(e) if self.settings.debug else None},
+                        status_code=500,
                     )
 
             elif action == "disable":
@@ -642,8 +662,9 @@ class MultiMCP:
                         {"message": f"Server '{server_name}' disabled successfully"}
                     )
                 except Exception as e:
+                    self.logger.error(f"❌ Failed to disable server '{server_name}': {e}")
                     return JSONResponse(
-                        {"error": f"Failed to disable server: {str(e)}"},
+                        {"error": "Failed to disable server", "detail": str(e) if self.settings.debug else None},
                         status_code=500,
                     )
 
@@ -654,4 +675,8 @@ class MultiMCP:
                 )
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_mcp_control: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )
