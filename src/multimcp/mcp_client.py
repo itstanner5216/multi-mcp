@@ -1,5 +1,5 @@
 from contextlib import AsyncExitStack
-from typing import Dict, Optional, Set
+from typing import Awaitable, Callable, Dict, Optional, Set
 import os
 import asyncio
 import time
@@ -20,7 +20,8 @@ class MCPClientManager:
     """
 
     def __init__(
-        self, max_concurrent_connections: int = 10, connection_timeout: float = 30.0
+        self, max_concurrent_connections: int = 10, connection_timeout: float = 30.0,
+        on_server_disconnected: Optional[Callable[[str], Awaitable[None]]] = None,
     ):
         self.stack = AsyncExitStack()
         self.clients: Dict[str, ClientSession] = {}
@@ -34,6 +35,7 @@ class MCPClientManager:
         self.always_on_servers: Set[str] = set()
         self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
         self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
+        self._on_server_disconnected = on_server_disconnected
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
@@ -240,6 +242,11 @@ class MCPClientManager:
                 except Exception as e:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
             self.pending_configs[name] = self.server_configs[name]
+            if self._on_server_disconnected:
+                try:
+                    await self._on_server_disconnected(name)
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Disconnect callback failed for '{name}': {e}")
 
     async def start_idle_checker(self, interval_seconds: float = 60.0) -> None:
         """Background task: periodically disconnect idle lazy servers."""

@@ -309,6 +309,7 @@ class MultiMCP:
 
         try:
             self.proxy = await MCPProxyServer.create(self.client_manager)
+            self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
             # Pre-populate tool list from YAML cache so tools are visible immediately
             self.proxy.load_tools_from_yaml(yaml_config)
