@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Literal, Any, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, ValidationError
 
 from mcp.server.stdio import stdio_server
 from starlette.applications import Starlette
@@ -482,11 +483,16 @@ class MultiMCP:
 
         elif method == "POST":
             try:
-                payload = await request.json()
+                try:
+                    payload = await request.json()
+                except json.JSONDecodeError:
+                    return JSONResponse(
+                        {"error": "Invalid JSON in request body"}, status_code=400
+                    )
 
                 if "mcpServers" not in payload:
                     return JSONResponse(
-                        {"error": "Missing 'mcpServers' in payload"}, status_code=400
+                        {"error": "Missing required 'mcpServers' field"}, status_code=422
                     )
 
                 # Create clients from full `mcpServers` dict
@@ -576,8 +582,12 @@ class MultiMCP:
     async def handle_mcp_control(self, request: Request) -> JSONResponse:
         """Handle POST /mcp_control for manual server enable/disable."""
         try:
-            payload = await request.json()
-
+            try:
+                payload = await request.json()
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {"error": "Invalid JSON in request body"}, status_code=400
+                )
             action = payload.get("action")
             server_name = payload.get("server")
 
