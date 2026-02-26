@@ -16,7 +16,7 @@ class ServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: Optional[str] = None
-    type: Literal["stdio", "sse", "streamablehttp"] = "stdio"
+    type: Literal["stdio", "sse", "http", "streamablehttp"] = "stdio"
     always_on: bool = False
     idle_timeout_minutes: int = 5
     tools: dict[str, ToolEntry] = Field(default_factory=dict)

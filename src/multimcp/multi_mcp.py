@@ -524,33 +524,40 @@ class MultiMCP:
 
         elif method == "POST":
             try:
-                try:
-                    payload = await request.json()
-                except json.JSONDecodeError:
-                    return JSONResponse(
-                        {"error": "Invalid JSON in request body"}, status_code=400
-                    )
+                payload = await request.json()
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {"error": "Invalid JSON in request body"}, status_code=400
+                )
+            if "mcpServers" not in payload:
+                return JSONResponse(
+                    {"error": "Missing required 'mcpServers' field"}, status_code=422
+                )
+            # Add servers as pending (lazy connection on first tool call)
+            servers = payload.get("mcpServers", {})
+            added = []
+            for name, config in servers.items():
+                self.proxy.client_manager.add_pending_server(name, config)
+                added.append(name)
 
-                if "mcpServers" not in payload:
-                    return JSONResponse(
-                        {"error": "Missing required 'mcpServers' field"}, status_code=422
-                    )
+            if not added:
+                return JSONResponse(
+                    {"error": "No servers found in payload"}, status_code=400
+                )
 
-                # Create clients from full `mcpServers` dict
-                new_clients = await self.proxy.client_manager.create_clients(payload)
-
-                if not new_clients:
-                    return JSONResponse(
-                        {"error": "No clients were created"}, status_code=500
-                    )
-
+            # Try to eagerly connect new servers for immediate availability
+            try:
+                new_clients = await self.proxy.client_manager.create_clients(
+                    {"mcpServers": {n: servers[n] for n in added}}
+                )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
+            except Exception as connect_err:
+                self.logger.warning(
+                    f"⚠️ Eager connect failed for {added}, will connect on first use: {connect_err}"
+                )
 
-                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
-
-            except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+            return JSONResponse({"message": f"Added {added}"})
 
         elif method == "DELETE":
             name = request.path_params.get("name")

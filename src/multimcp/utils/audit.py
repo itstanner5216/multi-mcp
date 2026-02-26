@@ -65,6 +65,7 @@ class AuditLogger:
             compression=self.config.compression,
             serialize=False,  # We'll serialize manually
             enqueue=True,  # Thread-safe
+            filter=lambda record: record["extra"].get("audit") is True,
         )
 
     def log_tool_call(
@@ -126,7 +127,7 @@ class AuditLogger:
     def _write_entry(self, entry: Dict[str, Any]) -> None:
         """Write a JSONL entry to the audit log."""
         json_line = json.dumps(entry, separators=(",", ":"))
-        logger.info(json_line)
+        logger.bind(audit=True).info(json_line)
 
     def close(self) -> None:
         """Remove the audit log sink from loguru."""

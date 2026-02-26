@@ -162,7 +162,7 @@ class MCPClientManager:
                 return []
 
         # Direct legacy SSE (skip Streamable HTTP probe)
-        if transport_type == "sse":
+        if transport_type in ("sse", "http"):
             try:
                 async with sse_client(url=url) as (read, write):
                     async with ClientSession(read, write) as client:

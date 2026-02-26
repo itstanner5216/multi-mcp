@@ -12,32 +12,33 @@ TEST_PROMPTS=[
 @pytest.mark.asyncio
 async def test_stdio_mode():
     """Test the MultiMCP server running in stdio mode."""
-    async with MultiServerMCPClient() as client:
-        await client.connect_to_server(
-            "multi-mcp",
-            command="python",
-            args=["./main.py"],
-        )
-        await run_e2e_test_with_client(client,EXPECTED_TOOLS,TEST_PROMPTS)
+    client = MultiServerMCPClient({
+        "multi-mcp": {
+            "command": "python",
+            "args": ["./main.py", "start", "--config", "./examples/config/mcp.json"],
+            "transport": "stdio",
+        }
+    })
+    await run_e2e_test_with_client(client, EXPECTED_TOOLS, TEST_PROMPTS)
 
 @pytest.mark.asyncio
 async def test_sse_mode():
     """Test the MultiMCP server running in SSE mode via subprocess."""
     process = await asyncio.create_subprocess_exec(
-        "python", "main.py", "--transport", "sse",
+        "python", "main.py", "start", "--transport", "sse", "--config", "./examples/config/mcp.json",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     try:
         # ⏳ Wait for the server to be ready (TODO- improve this with health checks or retry)
         await asyncio.sleep(4)
-        async with MultiServerMCPClient() as client:
-            await client.connect_to_server(
-                "multi-mcp",
-                transport="sse",
-                url="http://127.0.0.1:8080/sse",
-            )
-            await run_e2e_test_with_client(client,EXPECTED_TOOLS,TEST_PROMPTS)
+        client = MultiServerMCPClient({
+            "multi-mcp": {
+                "transport": "sse",
+                "url": "http://127.0.0.1:8085/sse",
+            }
+        })
+        await run_e2e_test_with_client(client, EXPECTED_TOOLS, TEST_PROMPTS)
     finally:
         # 🔚 Cleanup: kill server process
         process.kill()
@@ -57,13 +58,14 @@ async def test_sse_clients_mode():
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        async with MultiServerMCPClient() as client:
-            await client.connect_to_server(
-                "multi-mcp",
-                command="python",
-                args=["./main.py", "--config","./examples/config/mcp_sse.json"],
-            )
-            await run_e2e_test_with_client(client,EXPECTED_TOOLS,TEST_PROMPTS)
+        client = MultiServerMCPClient({
+            "multi-mcp": {
+                "command": "python",
+                "args": ["./main.py", "start", "--config", "./examples/config/mcp_sse.json"],
+                "transport": "stdio",
+            }
+        })
+        await run_e2e_test_with_client(client, EXPECTED_TOOLS, TEST_PROMPTS)
     finally:
         # 🔚 Cleanup: kill server process
         process.kill()
