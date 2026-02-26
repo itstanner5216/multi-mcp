@@ -1,6 +1,7 @@
 import asyncio
 import hmac
 import os
+import signal
 import uvicorn
 import json
 from pathlib import Path
@@ -284,8 +285,21 @@ class MultiMCP:
             server_dict = server_config.model_dump(exclude_none=True)
             self.client_manager.add_pending_server(server_name, server_dict)
 
+        # Register signal handlers for graceful shutdown
+        loop = asyncio.get_running_loop()
+        shutdown_event = asyncio.Event()
+
+        def _signal_handler(sig: int) -> None:
+            sig_name = signal.Signals(sig).name
+            self.logger.info(f"🛑 Received {sig_name}, initiating graceful shutdown...")
+            shutdown_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _signal_handler, sig)
+
         # Start idle checker background task
-        asyncio.create_task(self.client_manager.start_idle_checker())
+        bg_tasks: list[asyncio.Task] = []
+        bg_tasks.append(asyncio.create_task(self.client_manager.start_idle_checker()))
 
         # Build config dict for watchdog reconnects
         always_on_configs = {
@@ -294,7 +308,7 @@ class MultiMCP:
             if srv.always_on
         }
         asyncio.create_task(self.client_manager.start_always_on_watchdog(always_on_configs))
-
+        bg_tasks.append(asyncio.create_task(self.client_manager.start_always_on_watchdog(always_on_configs)))
         # Background: connect always_on servers after proxy starts
         async def _connect_always_on() -> None:
             for server_name, server_config in yaml_config.servers.items():
@@ -316,12 +330,29 @@ class MultiMCP:
             self.proxy.load_tools_from_yaml(yaml_config)
 
             # Connect always_on servers in background (don't block startup)
-            asyncio.create_task(_connect_always_on())
+            bg_tasks.append(asyncio.create_task(_connect_always_on()))
 
-            await self.start_server()
+            # Wait for server or shutdown signal
+            server_task = asyncio.create_task(self.start_server())
+            shutdown_task = asyncio.create_task(shutdown_event.wait())
+            done, pending = await asyncio.wait(
+                {server_task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # If shutdown signal received, cancel remaining tasks
+            for task in pending:
+                task.cancel()
         finally:
+            # Cancel all background tasks
+            self.logger.info("🧹 Cleaning up background tasks...")
+            for task in bg_tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait briefly for tasks to finish cancellation
+            if bg_tasks:
+                await asyncio.gather(*bg_tasks, return_exceptions=True)
             await self.client_manager.close()
-
+            self.logger.info("✅ Graceful shutdown complete")
     def load_mcp_config(self, path=None):
         """Loads MCP JSON configuration From File."""
         if not path or not os.path.exists(path):
