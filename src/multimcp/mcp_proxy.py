@@ -245,6 +245,10 @@ class MCPProxyServer(server.Server):
                     arguments=arguments,
                 )
 
+                # Refresh idle timer so active servers aren't evicted
+                if self.client_manager:
+                    self.client_manager.record_usage(tool_item.server_name)
+
                 return types.ServerResult(result)
             except Exception as e:
                 error_msg = str(e)
