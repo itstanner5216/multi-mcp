@@ -28,12 +28,21 @@ class MultiMCPConfig(BaseModel):
 
 
 def load_config(path: Path) -> MultiMCPConfig:
-    """Load YAML config from path. Returns empty config if file doesn't exist."""
+    """Load YAML config from path. Returns empty config if file doesn't exist or is invalid."""
     if not path.exists():
         return MultiMCPConfig()
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
-    return MultiMCPConfig.model_validate(raw)
+    try:
+        with open(path) as f:
+            raw = yaml.safe_load(f) or {}
+        return MultiMCPConfig.model_validate(raw)
+    except yaml.YAMLError as e:
+        from src.utils.logger import get_logger
+        get_logger("multi_mcp.config").error(f"❌ Invalid YAML in {path}: {e}")
+        return MultiMCPConfig()
+    except Exception as e:
+        from src.utils.logger import get_logger
+        get_logger("multi_mcp.config").error(f"❌ Failed to load config from {path}: {e}")
+        return MultiMCPConfig()
 
 
 def save_config(config: MultiMCPConfig, path: Path) -> None:

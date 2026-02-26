@@ -251,6 +251,9 @@ class MCPClientManager:
                     await stack.aclose()
                 except Exception as e:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
+            # Clean up runtime state; keep tool_filters and idle_timeouts (config for reconnection)
+            self.last_used.pop(name, None)
+            self._creation_locks.pop(name, None)
 
     async def start_idle_checker(self, interval_seconds: float = 60.0) -> None:
         """Background task: periodically disconnect idle lazy servers."""

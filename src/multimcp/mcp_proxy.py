@@ -172,6 +172,13 @@ class MCPProxyServer(server.Server):
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
 
+            # Clean up client manager runtime state for this server
+            if self.client_manager:
+                self.client_manager.tool_filters.pop(name, None)
+                self.client_manager.idle_timeouts.pop(name, None)
+                self.client_manager.last_used.pop(name, None)
+                self.client_manager._creation_locks.pop(name, None)
+
             # Send notification if client had tools capability
             if had_tools:
                 await self._send_tools_list_changed()
