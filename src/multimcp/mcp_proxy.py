@@ -183,6 +183,21 @@ class MCPProxyServer(server.Server):
         all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
 
+    def get_filtered_tools(self) -> dict[str, list[str]]:
+        """Return the filtered tool list grouped by server (same view as MCP tools/list).
+
+        Uses the proxy's tool_to_server registry which already has filters applied.
+        Includes both connected and lazy (pending) servers that have cached tool info.
+        """
+        tools_by_server: dict[str, list[str]] = {}
+        for key, mapping in self.tool_to_server.items():
+            server = mapping.server_name
+            _, tool_name = self._split_key(key)
+            if server not in tools_by_server:
+                tools_by_server[server] = []
+            tools_by_server[server].append(tool_name)
+        return tools_by_server
+
     async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
         """Invoke a tool on the correct backend MCP server."""
         tool_name = req.params.name

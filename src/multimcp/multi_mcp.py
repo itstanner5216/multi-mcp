@@ -547,20 +547,12 @@ class MultiMCP:
         return JSONResponse({"error": f"Unsupported method: {method}"}, status_code=405)
 
     async def handle_mcp_tools(self, request: Request) -> JSONResponse:
-        """Return the list of currently available tools grouped by server."""
+        """Return the list of available tools grouped by server (same view as MCP tools/list)."""
         try:
             if not self.proxy:
                 return JSONResponse({"error": "Proxy not initialized"}, status_code=500)
 
-            tools_by_server = {}
-            for server_name, client in self.proxy.client_manager.clients.items():
-                try:
-                    tools = await client.list_tools()
-                    tools_by_server[server_name] = [tool.name for tool in tools.tools]
-                except Exception as e:
-                    self.logger.error(f"❌ Error listing tools for server '{server_name}': {e}")
-                    tools_by_server[server_name] = {"error": "Tool listing failed", "detail": str(e) if self.settings.debug else None}
-
+            tools_by_server = self.proxy.get_filtered_tools()
             return JSONResponse({"tools": tools_by_server})
 
         except Exception as e:
