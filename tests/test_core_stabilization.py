@@ -188,7 +188,7 @@ async def test_prompts_are_namespaced(server_with_prompts, test_prompt):
 @pytest.mark.asyncio
 async def test_resources_are_namespaced(server_with_resources, test_resource):
     """
-    Test that resources are namespaced with server__name format (using name if available).
+    Test that resources are stored by raw URI (globally unique, no namespacing needed).
     """
     async with create_connected_server_and_client_session(
         server_with_resources
@@ -198,11 +198,11 @@ async def test_resources_are_namespaced(server_with_resources, test_resource):
 
         proxy = await MCPProxyServer.create(client_manager)
 
-        # Check internal mapping uses namespaced key
+        # Check internal mapping uses raw URI as key
         assert len(proxy.resource_to_server) == 1
         keys = list(proxy.resource_to_server.keys())
-        assert keys[0] == "ResourceServer__test_resource", (
-            f"Expected 'ResourceServer__test_resource', got '{keys[0]}'"
+        assert keys[0] == str(test_resource.uri), (
+            f"Expected '{test_resource.uri}', got '{keys[0]}'"
         )
 
 
