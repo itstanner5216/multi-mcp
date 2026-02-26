@@ -6,7 +6,7 @@ Logs all tool calls and failures to JSONL format with rotation support.
 
 from typing import Any, Dict, Optional
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 from loguru import logger
@@ -57,7 +57,7 @@ class AuditLogger:
         self.log_file = self.log_path / "audit.jsonl"
 
         # Add a sink for audit logs with rotation
-        logger.add(
+        self._sink_id = logger.add(
             str(self.log_file),
             format="{message}",  # Raw JSON, no formatting
             rotation=self.config.rotation,
@@ -84,7 +84,7 @@ class AuditLogger:
             result: Result returned (optional)
         """
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": "tool_call",
             "tool_name": tool_name,
             "server_name": server_name,
@@ -111,7 +111,7 @@ class AuditLogger:
             error: Error message or exception details
         """
         entry = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "event_type": "tool_call",
             "tool_name": tool_name,
             "server_name": server_name,
@@ -127,3 +127,7 @@ class AuditLogger:
         """Write a JSONL entry to the audit log."""
         json_line = json.dumps(entry, separators=(",", ":"))
         logger.info(json_line)
+
+    def close(self) -> None:
+        """Remove the audit log sink from loguru."""
+        logger.remove(self._sink_id)
