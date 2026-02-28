@@ -59,6 +59,11 @@ class MCPProxyServer(server.Server):
         self.trigger_manager = MCPTriggerManager(client_manager)
         # Optional retrieval pipeline (None = passthrough, all tools returned)
         self.retrieval_pipeline: Optional["RetrievalPipeline"] = None
+        # Circuit breaker: consecutive transport-failure counts per tool key
+        # (counts exceptions from call_tool, NOT isError=True tool responses)
+        self._tool_failure_counts: dict[str, int] = {}
+        # After this many consecutive transport failures, auto-quarantine the tool
+        self.quarantine_threshold: int = 3
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -127,7 +132,12 @@ class MCPProxyServer(server.Server):
             raise ValueError(f"Server name '{name}' cannot contain '__' separator")
 
         self.logger.info(f"try initialize client {name}: {client}")
-        result = await client.initialize()
+        timeout = (
+            self.client_manager._connection_timeout
+            if self.client_manager
+            else 30.0
+        )
+        result = await asyncio.wait_for(client.initialize(), timeout=timeout)
         self.capabilities[name] = result.capabilities
 
         if result.capabilities.tools:
@@ -373,8 +383,13 @@ class MCPProxyServer(server.Server):
         for server_name in enabled_servers:
             client = self.client_manager.clients.get(server_name)
             if client:
-                await self.initialize_single_client(server_name, client)
-                self.logger.info(f"🔥 Auto-enabled server '{server_name}' via trigger")
+                try:
+                    await self.initialize_single_client(server_name, client)
+                    self.logger.info(f"🔥 Auto-enabled server '{server_name}' via trigger")
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ Trigger-enabled '{server_name}' failed to initialize: {e}"
+                    )
 
         # Re-check tool_to_server in case new tool was just enabled
         if not tool_item:
@@ -421,6 +436,9 @@ class MCPProxyServer(server.Server):
                 if self.client_manager:
                     self.client_manager.record_usage(tool_item.server_name)
 
+                # Success: reset circuit breaker for this tool
+                getattr(self, '_tool_failure_counts', {}).pop(tool_name, None)
+
                 # Notify retrieval pipeline of tool usage (progressive disclosure)
                 if self.retrieval_pipeline is not None:
                     try:
@@ -444,6 +462,25 @@ class MCPProxyServer(server.Server):
                     arguments=arguments,
                     error=error_msg,
                 )
+
+                # Circuit breaker: count consecutive transport failures.
+                # NOTE: We only count exceptions from call_tool (transport-level failures),
+                # NOT result.isError=True (those are tool responses — could be valid arg errors).
+                failure_counts = getattr(self, '_tool_failure_counts', {})
+                count = failure_counts.get(tool_name, 0) + 1
+                failure_counts[tool_name] = count
+                if count >= getattr(self, 'quarantine_threshold', 3):
+                    self.logger.error(
+                        f"🚫 Tool '{tool_name}' has failed {count} consecutive times "
+                        f"with transport errors — auto-quarantining to protect the server. "
+                        f"Call POST /mcp_control {{action: 'toggle_tool', tool: '{original_name}', "
+                        f"server: '{tool_item.server_name}', enabled: true}} to re-enable."
+                    )
+                    self._tool_failure_counts.pop(tool_name, None)
+                    try:
+                        await self.toggle_tool(tool_item.server_name, original_name, enabled=False)
+                    except Exception as quarantine_err:
+                        self.logger.warning(f"⚠️ Auto-quarantine failed for '{tool_name}': {quarantine_err}")
 
                 # Return error to client
                 return types.ServerResult(
