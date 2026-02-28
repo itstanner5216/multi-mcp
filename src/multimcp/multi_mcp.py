@@ -1,4 +1,5 @@
 import asyncio
+import anyio
 import hmac
 import os
 import signal
@@ -490,11 +491,20 @@ class MultiMCP:
     async def start_stdio_server(self) -> None:
         """Run the proxy server over stdio."""
         async with stdio_server() as (read_stream, write_stream):
-            await self.proxy.run(
-                read_stream,
-                write_stream,
-                self.proxy.create_initialization_options(),
-            )
+            try:
+                await self.proxy.run(
+                    read_stream,
+                    write_stream,
+                    self.proxy.create_initialization_options(),
+                )
+            except (anyio.ClosedResourceError, ExceptionGroup) as e:
+                # Stdin closing while in-flight handlers write responses is expected.
+                # The tool calls already succeeded; only the final response write races.
+                if isinstance(e, ExceptionGroup):
+                    _, unhandled = e.split(anyio.ClosedResourceError)
+                    if unhandled:
+                        raise unhandled
+                self.logger.debug("Stdio stream closed during shutdown (expected)")
 
     def create_starlette_app(self) -> Starlette:
         """Create Starlette app with routes and optional auth middleware."""
