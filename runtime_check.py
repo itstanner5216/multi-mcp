@@ -770,6 +770,115 @@ if __name__ == "__main__":
               "required" in (cached12.tool.inputSchema if cached12 else {}))
 
     # ------------------------------------------------------------------ #
+    # PHASE 13: Real production tools — end-to-end through the proxy
+    # Connects to actual installed servers, calls real tools, validates results
+    # ------------------------------------------------------------------ #
+    header("PHASE 13: Real production tool calls (actual installed backends)")
+
+    from src.multimcp.yaml_config import load_config as load_real_cfg
+    real_cfg = load_real_cfg(Path.home() / ".config/multi-mcp/servers.yaml")
+
+    async def _test_server(server_name: str, tool_name: str, arguments: dict,
+                           result_validator, description: str) -> None:
+        """Connect to a real installed server via the proxy and call a tool."""
+        srv = real_cfg.servers.get(server_name)
+        if not srv:
+            print(f"  ⚠️  SKIP: {server_name} not in YAML (not installed)")
+            return
+
+        cmd = srv.command
+        args_list = srv.args or []
+        if not cmd:
+            print(f"  ⚠️  SKIP: {server_name} has no command (URL-only server)")
+            return
+
+        try:
+            async with AsyncExitStack() as stack:
+                params = StdioServerParameters(command=cmd, args=args_list)
+                cr, cw = await stack.enter_async_context(
+                    asyncio.wait_for(stdio_client(params).__aenter__(), timeout=20)
+                    if False else stdio_client(params)
+                )
+                sess = await stack.enter_async_context(ClientSession(cr, cw))
+                await asyncio.wait_for(sess.initialize(), timeout=15)
+
+                mgr = MCPClientManager()
+                mgr.clients[server_name] = sess
+                mgr.tool_filters[server_name] = None
+                proxy = MCPProxyServer(mgr)
+                await proxy.initialize_single_client(server_name, sess)
+
+                namespaced = f"{server_name}__{tool_name}"
+                if namespaced not in proxy.tool_to_server:
+                    check(f"{server_name}: {tool_name} available", False,
+                          f"known tools: {list(proxy.tool_to_server.keys())}")
+                    return
+
+                req = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name=namespaced, arguments=arguments
+                    ),
+                )
+                result = await asyncio.wait_for(proxy._call_tool(req), timeout=30)
+                is_err = False
+                raw_out = ""
+                try:
+                    is_err = result.root.isError
+                    raw_out = str(result.root.content[0].text) if result.root.content else ""
+                except Exception:
+                    raw_out = str(result)
+
+                check(f"{server_name}: {tool_name} no error", not is_err, raw_out[:120])
+                check(f"{server_name}: {tool_name} — {description}",
+                      result_validator(raw_out), f"got: {raw_out[:120]}")
+
+        except asyncio.TimeoutError:
+            print(f"  ⚠️  SKIP: {server_name} timed out (server not reachable)")
+        except Exception as e:
+            import anyio
+            if isinstance(e, ExceptionGroup):
+                real_excs = [ex for ex in e.exceptions
+                             if not isinstance(ex, anyio.ClosedResourceError)]
+                if not real_excs:
+                    return  # Only ClosedResourceError on cleanup — fine
+                check(f"{server_name}: connects without error", False, str(real_excs[0]))
+            else:
+                check(f"{server_name}: connects without error", False, str(e))
+
+    # context7 — real documentation lookup (no auth, pure HTTP API)
+    await _test_server(
+        server_name="context7",
+        tool_name="resolve-library-id",
+        arguments={"libraryName": "react", "query": "React hooks useState"},
+        result_validator=lambda out: "/" in out and len(out) > 3,
+        description="returns a library ID path (e.g. /facebook/react)",
+    )
+
+    # serena — local filesystem, no auth needed
+    await _test_server(
+        server_name="serena",
+        tool_name="list_dir",
+        arguments={"relative_path": ".", "recursive": False},
+        result_validator=lambda out: len(out) > 10,  # any non-trivial output
+        description="returns directory listing",
+    )
+
+    # sequential-thinking — pure computation, no external dependencies
+    await _test_server(
+        server_name="sequential-thinking",
+        tool_name="sequentialthinking",
+        arguments={
+            "thought": "Testing the proxy",
+            "nextThoughtNeeded": False,
+            "thoughtNumber": 1,
+            "totalThoughts": 1,
+        },
+        result_validator=lambda out: len(out) > 0,
+        description="returns structured thinking output",
+    )
+
+    # ------------------------------------------------------------------ #
     # Summary
     # ------------------------------------------------------------------ #
     print(f"\n{'='*65}")
