@@ -26,6 +26,8 @@ def _sanitize_arguments(args):
     if args is None:
         return None
     if not isinstance(args, dict):
+        if isinstance(args, list):
+            return [_sanitize_arguments(item) for item in args]
         return args
     sanitized = {}
     for key, value in args.items():
@@ -33,6 +35,8 @@ def _sanitize_arguments(args):
             sanitized[key] = _REDACTED
         elif isinstance(value, dict):
             sanitized[key] = _sanitize_arguments(value)
+        elif isinstance(value, list):
+            sanitized[key] = [_sanitize_arguments(item) for item in value]
         else:
             sanitized[key] = value
     return sanitized

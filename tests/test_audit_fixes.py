@@ -53,6 +53,21 @@ class TestAuditSanitization:
     def test_handles_non_dict(self):
         assert _sanitize_arguments("plain string") == "plain string"
 
+    def test_handles_list_with_sensitive_dicts(self):
+        """Lists containing dicts with sensitive keys should be sanitized."""
+        args = {"items": [{"api_key": "secret", "name": "test"}, {"token": "abc"}]}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["items"][0]["api_key"] == "***REDACTED***"
+        assert sanitized["items"][0]["name"] == "test"
+        assert sanitized["items"][1]["token"] == "***REDACTED***"
+
+    def test_handles_plain_list_values(self):
+        """Lists of non-dict values should pass through unchanged."""
+        args = {"tags": ["a", "b", "c"], "count": 3}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["tags"] == ["a", "b", "c"]
+        assert sanitized["count"] == 3
+
 
 class TestAuditJsonSerialization:
     """Verify json.dumps with default=str handles non-serializable types."""
