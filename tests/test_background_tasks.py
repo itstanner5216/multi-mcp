@@ -142,9 +142,9 @@ class TestTaskShutdown:
 
     @pytest.mark.asyncio
     async def test_shutdown_with_no_bg_tasks_is_safe(self):
-        """Shutdown with an empty _bg_tasks list should not raise."""
+        """Shutdown with an empty _bg_tasks set should not raise."""
         app = MultiMCP(transport="sse", host="127.0.0.1", port=18093)
-        assert app._bg_tasks == []
+        assert app._bg_tasks == set()
 
         # Mimics the finally block in run()
         for task in list(app._bg_tasks):

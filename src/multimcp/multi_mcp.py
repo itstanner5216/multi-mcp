@@ -48,17 +48,16 @@ class MultiMCP:
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
         self.client_manager = MCPClientManager()
-        self._bg_tasks: list[asyncio.Task] = []
+        self._bg_tasks: set[asyncio.Task] = set()
 
     def _track_task(self, coro, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
-        self._bg_tasks.append(task)
+        self._bg_tasks.add(task)
         task.add_done_callback(self._on_task_done)
         return task
 
     def _on_task_done(self, task: asyncio.Task) -> None:
-        if task in self._bg_tasks:
-            self._bg_tasks.remove(task)
+        self._bg_tasks.discard(task)
         if not task.cancelled() and task.exception():
             self.logger.error(f"❌ Background task '{task.get_name()}' failed: {task.exception()}")
 
@@ -287,18 +286,20 @@ class MultiMCP:
     async def _discover_new_servers(
         self, config: MultiMCPConfig, new_servers: dict, yaml_path: Path
     ) -> MultiMCPConfig:
-        """Discover tools from new servers and merge them into existing config."""
-        # Add new servers to config for discovery
-        discovery_config = MultiMCPConfig(servers=new_servers)
-        for name, srv in new_servers.items():
-            config.servers[name] = srv
+        """Discover tools from new servers and merge them into existing config.
 
+        Only mutates config.servers AFTER successful discovery per-server."""
+        discovery_config = MultiMCPConfig(servers=new_servers)
         discovered = await self.client_manager.discover_all(discovery_config)
         for server_name, tools in discovered.items():
+            # Only add to config after successful discovery
+            if server_name in new_servers:
+                config.servers[server_name] = new_servers[server_name]
             merge_discovered_tools(config, server_name, tools)
 
-        save_config(config, yaml_path)
-        self.logger.info(f"📝 Updated config with new servers at {yaml_path}")
+        if discovered:
+            save_config(config, yaml_path)
+            self.logger.info(f"\U0001f4dd Updated config with new servers at {yaml_path}")
         return config
 
     async def run(self):
