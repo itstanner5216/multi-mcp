@@ -2,7 +2,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Optional
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+from src.utils.logger import get_logger
+
+logger = get_logger("multi_mcp.config")
 
 
 class ToolEntry(BaseModel):
@@ -37,12 +40,13 @@ def load_config(path: Path) -> MultiMCPConfig:
             raw = yaml.safe_load(f) or {}
         return MultiMCPConfig.model_validate(raw)
     except yaml.YAMLError as e:
-        from src.utils.logger import get_logger
-        get_logger("multi_mcp.config").error(f"❌ Invalid YAML in {path}: {e}")
+        logger.error(f"❌ Invalid YAML in {path}: {e}")
+        return MultiMCPConfig()
+    except (ValidationError, TypeError, ValueError) as e:
+        logger.error(f"❌ Invalid config schema at {path}: {e}")
         return MultiMCPConfig()
     except Exception as e:
-        from src.utils.logger import get_logger
-        get_logger("multi_mcp.config").error(f"❌ Failed to load config from {path}: {e}")
+        logger.error(f"❌ Unexpected error loading config from {path}: {e}")
         return MultiMCPConfig()
 
 
