@@ -500,20 +500,27 @@ class MultiMCP:
         """Create Starlette app with routes and optional auth middleware."""
         sse = SseServerTransport("/messages/")
 
-        async def handle_sse(request):
-            # Check auth for SSE endpoint
-            auth_error = self._check_auth(request)
-            if auth_error:
-                return auth_error
+        class _SSEHandler:
+            """Raw ASGI handler for SSE — bypasses Starlette's request_response wrapper
+            which would TypeError when handle_sse returns None after streaming."""
+            def __init__(self, multi_mcp_instance, sse_transport):
+                self._mcp = multi_mcp_instance
+                self._sse = sse_transport
 
-            async with sse.connect_sse(
-                request.scope, request.receive, request._send
-            ) as streams:
-                await self.proxy.run(
-                    streams[0],
-                    streams[1],
-                    self.proxy.create_initialization_options(),
-                )
+            async def __call__(self, scope, receive, send):
+                request = Request(scope, receive, send)
+                auth_error = self._mcp._check_auth(request)
+                if auth_error:
+                    await auth_error(scope, receive, send)
+                    return
+                async with self._sse.connect_sse(scope, receive, send) as streams:
+                    await self._mcp.proxy.run(
+                        streams[0],
+                        streams[1],
+                        self._mcp.proxy.create_initialization_options(),
+                    )
+
+        handle_sse = _SSEHandler(self, sse)
 
         # Wrap HTTP endpoints with auth
         async def auth_mcp_servers(request):
