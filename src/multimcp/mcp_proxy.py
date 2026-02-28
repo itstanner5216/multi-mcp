@@ -209,6 +209,8 @@ class MCPProxyServer(server.Server):
 
             # Clean up client manager runtime state for this server
             if self.client_manager:
+                self.client_manager.pending_configs.pop(name, None)
+                self.client_manager.server_configs.pop(name, None)
                 self.client_manager.tool_filters.pop(name, None)
                 self.client_manager.idle_timeouts.pop(name, None)
                 self.client_manager.last_used.pop(name, None)

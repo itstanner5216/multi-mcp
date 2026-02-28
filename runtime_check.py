@@ -559,15 +559,9 @@ async def run_all() -> int:
 
                 r3 = await hc.get("http://127.0.0.1:18097/mcp_servers")
                 body3 = r3.json()
-                # BUG (documented): unregister_client removes from clients but not
-                # pending_configs, so deleted servers still appear in pending_servers.
-                # Check active_servers (which IS correctly cleaned by DELETE).
-                check("runtime_calc removed from active_servers after DELETE",
-                      "runtime_calc" not in body3.get("active_servers", []), str(body3))
-                # Known bug: pending_servers still shows it — document but don't fail
-                if "runtime_calc" in body3.get("pending_servers", []):
-                    print("  ⚠️  KNOWN BUG: runtime_calc still in pending_servers after DELETE "
-                          "(unregister_client doesn't clean pending_configs — CLI scope fix needed)")
+                all8b = body3.get("active_servers", []) + body3.get("pending_servers", [])
+                check("runtime_calc gone from both active and pending after DELETE",
+                      "runtime_calc" not in all8b, str(body3))
 
         except Exception as e:
             check("Phase 8 server reachable", False, str(e))
