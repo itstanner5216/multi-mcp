@@ -20,7 +20,7 @@ class ServerConfig(BaseModel):
     always_on: bool = False
     idle_timeout_minutes: int = 5
     tools: dict[str, ToolEntry] = Field(default_factory=dict)
-    triggers: list[dict] = Field(default_factory=list)
+    triggers: list[str] = Field(default_factory=list)
 
 
 class MultiMCPConfig(BaseModel):
