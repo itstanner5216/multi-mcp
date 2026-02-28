@@ -332,6 +332,8 @@ class MCPClientManager:
         try:
             await server_stack.__aenter__()
             command = server_dict.get("command")
+            if command:
+                _validate_command(command)
             args = server_dict.get("args", [])
             env = server_dict.get("env", {})
             safe_env = _filter_env(env)
@@ -467,6 +469,8 @@ class MCPClientManager:
                         server_stack = AsyncExitStack()
                         await server_stack.__aenter__()
                         command = server_config.get("command")
+                        if command:
+                            _validate_command(command)
                         url = server_config.get("url")
                         args = server_config.get("args", [])
                         env = server_config.get("env", {})

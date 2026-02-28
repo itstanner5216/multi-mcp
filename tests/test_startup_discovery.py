@@ -46,7 +46,7 @@ async def test_discover_all_returns_tool_dict():
     transport_ctx, _, _ = _make_mock_transport()
 
     config = MultiMCPConfig(servers={
-        "github": ServerConfig(command="/fake/run-github.sh", always_on=False)
+        "github": ServerConfig(command="npx", always_on=False)
     })
 
     with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
@@ -66,7 +66,7 @@ async def test_discover_all_disconnects_lazy_servers():
     transport_ctx, _, _ = _make_mock_transport()
 
     config = MultiMCPConfig(servers={
-        "tavily": ServerConfig(command="/fake/run-tavily.sh", always_on=False)
+        "tavily": ServerConfig(command="npx", always_on=False)
     })
 
     with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
@@ -85,7 +85,7 @@ async def test_discover_all_keeps_always_on_connected():
     transport_ctx, _, _ = _make_mock_transport()
 
     config = MultiMCPConfig(servers={
-        "github": ServerConfig(command="/fake/run-github.sh", always_on=True)
+        "github": ServerConfig(command="npx", always_on=True)
     })
 
     with patch("src.multimcp.mcp_client.stdio_client", transport_ctx), \
