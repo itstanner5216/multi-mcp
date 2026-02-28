@@ -15,7 +15,12 @@ from loguru import logger
 from .config import AuditConfig, DEFAULT_AUDIT_CONFIG
 
 _SENSITIVE_KEYS = re.compile(
-    r"(api[_-]?key|token|password|passwd|secret|credential|auth|bearer)",
+    r"("
+    r"api[_-]?key|access[_-]?key|private[_-]?key|signing[_-]?key|"
+    r"encryption[_-]?key|ssh[_-]?key|master[_-]?key|"
+    r"token|password|passwd|secret|credential|auth|bearer|"
+    r"connection[_-]?string|cookie"
+    r")",
     re.IGNORECASE,
 )
 _REDACTED = "***REDACTED***"

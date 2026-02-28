@@ -523,19 +523,6 @@ class MCPProxyServer(server.Server):
             isError=True,
         )
 
-    # Utilization function
-    async def _set_logging_level(
-        self, req: types.SetLevelRequest
-    ) -> types.ServerResult:
-        """Broadcast logging level to backends. Currently unregistered — see _register_request_handlers."""
-        raise NotImplementedError("Handler not registered; re-enable in _register_request_handlers if needed")
-
-    async def _send_progress_notification(
-        self, req: types.ProgressNotification
-    ) -> None:
-        """Relay progress to backends. Currently unregistered — wrong MCP direction."""
-        raise NotImplementedError("Handler not registered; MCP progress is server→client")
-
     def _register_request_handlers(self) -> None:
         """Dynamically registers handlers for all MCP requests."""
 

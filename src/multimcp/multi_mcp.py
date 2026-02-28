@@ -48,6 +48,8 @@ class MultiMCP:
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
         self.client_manager = MCPClientManager()
+        # Safe under asyncio single-threaded model: add/discard are synchronous,
+        # done callbacks fire between event loop iterations — no concurrent mutation.
         self._bg_tasks: set[asyncio.Task] = set()
 
     def _track_task(self, coro, name: str) -> asyncio.Task:

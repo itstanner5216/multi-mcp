@@ -68,6 +68,58 @@ class TestAuditSanitization:
         assert sanitized["tags"] == ["a", "b", "c"]
         assert sanitized["count"] == 3
 
+    def test_redacts_private_key(self):
+        args = {"private_key": "-----BEGIN RSA-----", "name": "test"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["private_key"] == "***REDACTED***"
+
+    def test_redacts_access_key(self):
+        args = {"access_key": "AKIA1234", "region": "us-east-1"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["access_key"] == "***REDACTED***"
+        assert sanitized["region"] == "us-east-1"
+
+    def test_redacts_connection_string(self):
+        args = {"connection_string": "postgres://user:pass@host/db"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["connection_string"] == "***REDACTED***"
+
+    def test_redacts_signing_key(self):
+        args = {"signing_key": "hmac-secret", "alg": "HS256"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["signing_key"] == "***REDACTED***"
+        assert sanitized["alg"] == "HS256"
+
+    def test_redacts_ssh_key(self):
+        args = {"ssh_key": "ssh-rsa AAAA...", "host": "example.com"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["ssh_key"] == "***REDACTED***"
+
+    def test_redacts_cookie(self):
+        args = {"cookie": "session=abc123", "path": "/"}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["cookie"] == "***REDACTED***"
+
+    def test_deeply_nested_sanitization(self):
+        """Three-level nesting should still redact sensitive keys."""
+        args = {
+            "config": {
+                "database": {
+                    "connection_string": "postgres://secret",
+                    "pool_size": 5,
+                }
+            }
+        }
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["config"]["database"]["connection_string"] == "***REDACTED***"
+        assert sanitized["config"]["database"]["pool_size"] == 5
+
+    def test_list_of_lists_with_dicts(self):
+        """Nested lists containing dicts with sensitive keys."""
+        args = {"data": [{"items": [{"token": "secret"}]}]}
+        sanitized = _sanitize_arguments(args)
+        assert sanitized["data"][0]["items"][0]["token"] == "***REDACTED***"
+
 
 class TestAuditJsonSerialization:
     """Verify json.dumps with default=str handles non-serializable types."""
