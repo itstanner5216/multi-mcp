@@ -37,11 +37,25 @@ class RetrievalLogger(ABC):
 class NullLogger(RetrievalLogger):
     """No-op logger. Default when no logger configured."""
 
-    async def log_retrieval(self, context, results, latency_ms):
+    async def log_retrieval(
+        self,
+        context: RetrievalContext,
+        results: list[ScoredTool],
+        latency_ms: float,
+    ) -> None:
         pass
 
-    async def log_retrieval_miss(self, tool_name, context):
+    async def log_retrieval_miss(
+        self,
+        tool_name: str,
+        context: RetrievalContext,
+    ) -> None:
         pass
 
-    async def log_tool_sequence(self, session_id, tool_a, tool_b):
+    async def log_tool_sequence(
+        self,
+        session_id: str,
+        tool_a: str,
+        tool_b: str,
+    ) -> None:
         pass
