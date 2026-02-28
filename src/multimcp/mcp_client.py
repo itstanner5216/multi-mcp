@@ -155,6 +155,8 @@ class MCPClientManager:
         self._creation_locks: Dict[str, asyncio.Lock] = {}
         self.on_server_reconnected: Optional[Any] = None  # async callable(server_name, client)
         self._supervision_tasks: Dict[str, asyncio.Task] = {}
+        self._lifecycle_tasks: Dict[str, asyncio.Task] = {}
+        self._shutdown_events: Dict[str, asyncio.Event] = {}
 
     def _get_creation_lock(self, name: str) -> asyncio.Lock:
         """Get or create a per-server creation lock (lazily initialized)."""
@@ -394,7 +396,9 @@ class MCPClientManager:
             read, write = await server_stack.enter_async_context(stdio_client(params))
             client = await server_stack.enter_async_context(ClientSession(read, write))
 
-            init_result = await client.initialize()
+            init_result = await asyncio.wait_for(
+                client.initialize(), timeout=self._connection_timeout,
+            )
             tools = []
             if init_result.capabilities.tools:
                 tools_result = await client.list_tools()
@@ -523,113 +527,153 @@ class MCPClientManager:
                     if not server_config:
                         continue
                     try:
-                        server_stack = AsyncExitStack()
-                        await server_stack.__aenter__()
-                        command = server_config.get("command")
-                        if command:
-                            _validate_command(command)
-                        url = server_config.get("url")
-                        args = server_config.get("args", [])
-                        env = server_config.get("env", {})
-                        safe_env = _filter_env(env)
-                        merged_env = os.environ.copy()
-                        merged_env.update(safe_env)
-
-                        if command:
-                            params = StdioServerParameters(command=command, args=args, env=merged_env)
-                            read, write = await server_stack.enter_async_context(stdio_client(params))
-                            client = await server_stack.enter_async_context(ClientSession(read, write))
-                        elif url:
-                            client = await self._connect_url_server(name, url, env, server_stack)
-                        else:
-                            await server_stack.aclose()
-                            continue
-
-                        await client.initialize()
-                        self.clients[name] = client
-                        self.server_stacks[name] = server_stack
-                        self.logger.info(f"✅ Reconnected always-on server '{name}'")
-
-                        # Notify proxy so it can update tool mappings
-                        if self.on_server_reconnected:
-                            try:
-                                await self.on_server_reconnected(name, client)
-                            except Exception as cb_err:
-                                self.logger.warning(f"⚠️ on_server_reconnected callback failed for '{name}': {cb_err}")
+                        # Use _create_single_client which runs in a lifecycle task
+                        # so crashes are isolated from the event loop
+                        await asyncio.wait_for(
+                            self._create_single_client(name, server_config),
+                            timeout=self._connection_timeout,
+                        )
+                        client = self.clients.get(name)
+                        if client:
+                            await asyncio.wait_for(
+                                client.initialize(),
+                                timeout=self._connection_timeout,
+                            )
+                            self.logger.info(f"✅ Reconnected always-on server '{name}'")
+                            # Notify proxy so it can update tool mappings
+                            if self.on_server_reconnected:
+                                try:
+                                    await self.on_server_reconnected(name, client)
+                                except Exception as cb_err:
+                                    self.logger.warning(f"⚠️ on_server_reconnected callback failed for '{name}': {cb_err}")
+                    except asyncio.TimeoutError:
+                        self.logger.error(f"❌ Timeout reconnecting '{name}'")
                     except Exception as e:
                         self.logger.error(f"❌ Failed to reconnect '{name}': {e}")
-                        try:
-                            await server_stack.aclose()
-                        except Exception:
-                            pass
 
     async def _create_single_client(self, name: str, server: dict) -> None:
         """
         Internal helper to create a single client from config.
-        Uses a per-server AsyncExitStack so a crashed client cannot
-        propagate exceptions into the shared server lifecycle.
+        Runs the connection in an isolated lifecycle task so that when the
+        backend subprocess dies, exceptions are caught by the task instead
+        of propagating into the event loop and crashing the server.
 
         Args:
             name (str): Server name
             server (dict): Server configuration
         """
-        # Close any existing stack for this server to prevent leaks on reconnection
-        existing_stack = self.server_stacks.get(name)
-        if existing_stack:
+        # Shut down any existing lifecycle for this server
+        await self._stop_server_lifecycle(name)
+
+        ready_event = asyncio.Event()
+        error_holder: list = []  # mutable container for init errors
+        shutdown_event = asyncio.Event()
+        self._shutdown_events[name] = shutdown_event
+
+        async def _lifecycle() -> None:
+            """Runs inside its own asyncio task. Holds all context managers
+            open until shutdown is requested or the backend dies."""
+            server_stack = AsyncExitStack()
+            await server_stack.__aenter__()
             try:
-                await existing_stack.aclose()
-            except Exception as e:
-                self.logger.warning(f"⚠️ Error closing old stack for '{name}': {e}")
+                command = server.get("command")
+                url = server.get("url")
+                args = server.get("args", [])
+                env = server.get("env", {})
 
-        server_stack = AsyncExitStack()
-        await server_stack.__aenter__()
+                if command:
+                    _validate_command(command)
+                    safe_env = _filter_env(env)
+                    merged_env = os.environ.copy()
+                    merged_env.update(safe_env)
+                    self.logger.info(f"🔌 Creating stdio client for {name}")
+                    params = StdioServerParameters(
+                        command=command, args=args, env=merged_env,
+                    )
+                    read, write = await server_stack.enter_async_context(stdio_client(params))
+                    session = await server_stack.enter_async_context(
+                        ClientSession(read, write)
+                    )
+                elif url:
+                    await _validate_url(url)
+                    session = await self._connect_url_server(name, url, env, server_stack)
+                else:
+                    self.logger.warning(f"⚠️ Skipping {name}: No command or URL provided.")
+                    await server_stack.aclose()
+                    ready_event.set()
+                    return
 
-        try:
-            command = server.get("command")
-            url = server.get("url")
-            args = server.get("args", [])
-            env = server.get("env", {})
+                # Register the session and signal the caller that we're ready
+                self.clients[name] = session
+                self.server_stacks[name] = server_stack
+                self.logger.info(f"✅ Connected to {name}")
+                ready_event.set()
 
-            if command:
-                _validate_command(command)
-                safe_env = _filter_env(env)
-                merged_env = os.environ.copy()
-                merged_env.update(safe_env)
-                self.logger.info(f"🔌 Creating stdio client for {name}")
-                params = StdioServerParameters(
-                    command=command,
-                    args=args,
-                    env=merged_env,
+                # Hold the contexts open until shutdown is requested.
+                # If the backend subprocess dies, the await will be interrupted
+                # by an exception from the task group inside stdio_client/ClientSession.
+                await shutdown_event.wait()
+
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:
+                # Backend died or connection failed.
+                if not ready_event.is_set():
+                    # Init phase failure — report to caller
+                    error_holder.append(exc)
+                    ready_event.set()
+                    return
+                # Post-init crash — the backend disconnected while running
+                self.logger.warning(
+                    f"🔌 Server '{name}' disconnected: {type(exc).__name__}: {exc}"
                 )
-                read, write = await server_stack.enter_async_context(stdio_client(params))
-                session = await server_stack.enter_async_context(
-                    ClientSession(read, write)
-                )
+            finally:
+                # Clean up: remove from dicts, close stack
+                self.clients.pop(name, None)
+                self.server_stacks.pop(name, None)
+                self._shutdown_events.pop(name, None)
+                try:
+                    await server_stack.aclose()
+                except Exception:
+                    pass
+                # Notify proxy about disconnection (only if we were previously connected)
+                if ready_event.is_set() and not error_holder:
+                    if self._on_server_disconnected:
+                        try:
+                            await self._on_server_disconnected(name)
+                        except Exception:
+                            pass
 
-            elif url:
-                await _validate_url(url)
-                session = await self._connect_url_server(name, url, env, server_stack)
+        task = asyncio.create_task(_lifecycle(), name=f"lifecycle-{name}")
+        self._lifecycle_tasks[name] = task
 
-            else:
-                self.logger.warning(f"⚠️ Skipping {name}: No command or URL provided.")
-                await server_stack.aclose()
-                return
+        # Wait for the lifecycle task to finish initialization
+        await ready_event.wait()
 
-            self.clients[name] = session
-            self.server_stacks[name] = server_stack
-            self.logger.info(f"✅ Connected to {name}")
+        if error_holder:
+            raise error_holder[0]
 
-            # Start supervision task to detect disconnect and clean up gracefully
-            # Without this, a dying subprocess crashes the entire server
-            self._start_supervision(name)
-
-        except Exception as e:
-            self.logger.error(f"❌ Failed to create client for {name}: {e}")
+    async def _stop_server_lifecycle(self, name: str) -> None:
+        """Signal a server's lifecycle task to shut down and wait for it."""
+        # Signal shutdown
+        evt = self._shutdown_events.pop(name, None)
+        if evt:
+            evt.set()
+        # Cancel supervision if any
+        sup = self._supervision_tasks.pop(name, None)
+        if sup and not sup.done():
+            sup.cancel()
+        # Wait for lifecycle task to finish
+        task = self._lifecycle_tasks.pop(name, None)
+        if task and not task.done():
             try:
-                await server_stack.aclose()
-            except Exception:
-                pass
-            raise
+                await asyncio.wait_for(task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
 
 
     def _start_supervision(self, name: str, interval: float = 10.0) -> None:
@@ -739,6 +783,9 @@ class MCPClientManager:
         """
         Closes all clients and releases resources managed by the async context stack.
         """
+        # Signal all lifecycle tasks to shut down
+        for name, evt in list(self._shutdown_events.items()):
+            evt.set()
         # Cancel supervision tasks first so they don't interfere with cleanup
         for name, task in list(self._supervision_tasks.items()):
             if not task.done():
@@ -751,6 +798,21 @@ class MCPClientManager:
                 pass
         self._supervision_tasks.clear()
 
+        # Wait for lifecycle tasks to finish (they handle their own stack cleanup)
+        for name, task in list(self._lifecycle_tasks.items()):
+            if not task.done():
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
+        self._lifecycle_tasks.clear()
+        self._shutdown_events.clear()
+
+        # Close any stacks not managed by lifecycle tasks (e.g. from _discover_stdio)
         for name, server_stack in list(self.server_stacks.items()):
             try:
                 await server_stack.aclose()
