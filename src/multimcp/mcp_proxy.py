@@ -506,28 +506,14 @@ class MCPProxyServer(server.Server):
     async def _set_logging_level(
         self, req: types.SetLevelRequest
     ) -> types.ServerResult:
-        """Broadcast a new logging level to all connected clients."""
-        for client in self.client_manager.clients.values():
-            try:
-                await client.set_logging_level(req.params.level)
-            except Exception as e:
-                self.logger.error(f"❌ Failed to set logging level on client: {e}")
-
-        return types.ServerResult(types.EmptyResult())
+        """Broadcast logging level to backends. Currently unregistered — see _register_request_handlers."""
+        raise NotImplementedError("Handler not registered; re-enable in _register_request_handlers if needed")
 
     async def _send_progress_notification(
         self, req: types.ProgressNotification
     ) -> None:
-        """Relay a progress update to all backend clients."""
-        for client in self.client_manager.clients.values():
-            try:
-                await client.send_progress_notification(
-                    req.params.progressToken,
-                    req.params.progress,
-                    req.params.total,
-                )
-            except Exception as e:
-                self.logger.error(f"❌ Failed to send progress notification: {e}")
+        """Relay progress to backends. Currently unregistered — wrong MCP direction."""
+        raise NotImplementedError("Handler not registered; MCP progress is server→client")
 
     def _register_request_handlers(self) -> None:
         """Dynamically registers handlers for all MCP requests."""
@@ -545,11 +531,11 @@ class MCPProxyServer(server.Server):
         self.request_handlers[types.ListToolsRequest] = self._list_tools
         self.request_handlers[types.CallToolRequest] = self._call_tool
 
-        self.notification_handlers[types.ProgressNotification] = (
-            self._send_progress_notification
-        )
-
-        self.request_handlers[types.SetLevelRequest] = self._set_logging_level
+        # NOTE: ProgressNotification and SetLevelRequest handlers removed.
+        # MCP progress flows server→client (not client→server), so relaying
+        # client progress to backends is wrong direction per spec.
+        # SetLevelRequest could be valid for a proxy but is unused by any
+        # known MCP client. Re-add if a real use case emerges.
 
     async def _initialize_tools_for_client(
         self, server_name: str, client: ClientSession
