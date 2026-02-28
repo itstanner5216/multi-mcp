@@ -113,7 +113,7 @@ class MCPProxyServer(server.Server):
 
         # Validate name doesn't contain separator
         if "__" in name:
-                    raise ValueError(f"Server name '{name}' cannot contain '__' separator")
+            raise ValueError(f"Server name '{name}' cannot contain '__' separator")
 
         self.logger.info(f"try initialize client {name}: {client}")
         result = await client.initialize()
@@ -181,15 +181,17 @@ class MCPProxyServer(server.Server):
 
             self.capabilities.pop(name, None)
 
-            # Fix: correct filter condition - remove entries where client matches
+            # Fix: filter by server_name, not client identity.
+            # After disconnect, client is set to None, so v.client != client
+            # would be True (None != original_client), keeping ghost entries.
             self.tool_to_server = {
-                k: v for k, v in self.tool_to_server.items() if v.client != client
+                k: v for k, v in self.tool_to_server.items() if v.server_name != name
             }
             self.prompt_to_server = {
-                k: v for k, v in self.prompt_to_server.items() if v.client != client
+                k: v for k, v in self.prompt_to_server.items() if v.server_name != name
             }
             self.resource_to_server = {
-                k: v for k, v in self.resource_to_server.items() if v.client != client
+                k: v for k, v in self.resource_to_server.items() if v.server_name != name
             }
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
@@ -291,9 +293,9 @@ class MCPProxyServer(server.Server):
                     original_name, arguments
                 )
 
-                # Log successful tool invocation
+                # Log successful tool invocation (use original name for cross-referencing)
                 self.audit_logger.log_tool_call(
-                    tool_name=tool_name,
+                    tool_name=original_name,
                     server_name=tool_item.server_name,
                     arguments=arguments,
                 )
@@ -307,9 +309,9 @@ class MCPProxyServer(server.Server):
                 error_msg = str(e)
                 self.logger.error(f"❌ Failed to call tool '{tool_name}': {e}")
 
-                # Log tool failure
+                # Log tool failure (use original name for cross-referencing)
                 self.audit_logger.log_tool_failure(
-                    tool_name=tool_name,
+                    tool_name=original_name,
                     server_name=tool_item.server_name,
                     arguments=arguments,
                     error=error_msg,
@@ -413,7 +415,9 @@ class MCPProxyServer(server.Server):
         all_resources = []
         for key, mapping in self.resource_to_server.items():
             namespaced_resource = mapping.resource.model_copy()
-            namespaced_resource.name = key
+            # Prefix name with server for disambiguation; URI stays raw for lookups
+            original_name = namespaced_resource.name or str(namespaced_resource.uri)
+            namespaced_resource.name = self._make_key(mapping.server_name, original_name)
             all_resources.append(namespaced_resource)
         return types.ServerResult(resources=all_resources)
 
@@ -421,12 +425,13 @@ class MCPProxyServer(server.Server):
         self, req: types.ReadResourceRequest
     ) -> types.ServerResult:
         """Read a resource from the appropriate backend MCP server."""
-        resource_uri = req.params.uri
-        mapping = self.resource_to_server.get(str(resource_uri))
+        resource_uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(resource_uri)
 
         if mapping and mapping.client:
             try:
-                result = await mapping.client.read_resource(req.params.uri)
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
+                result = await mapping.client.read_resource(resource_uri)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to read resource '{resource_uri}': {e}")
@@ -446,11 +451,12 @@ class MCPProxyServer(server.Server):
         self, req: types.SubscribeRequest
     ) -> types.ServerResult:
         """Subscribe to a resource for updates on a backend MCP server."""
-        uri = req.params.uri
-        mapping = self.resource_to_server.get(str(uri))
+        uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(uri)
 
         if mapping and mapping.client:
             try:
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
                 await mapping.client.subscribe_resource(uri)
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
@@ -471,11 +477,12 @@ class MCPProxyServer(server.Server):
         self, req: types.UnsubscribeRequest
     ) -> types.ServerResult:
         """Unsubscribe from a previously subscribed resource."""
-        uri = req.params.uri
-        mapping = self.resource_to_server.get(str(uri))
+        uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(uri)
 
         if mapping and mapping.client:
             try:
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
                 await mapping.client.unsubscribe_resource(uri)
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
@@ -488,7 +495,8 @@ class MCPProxyServer(server.Server):
         return types.ServerResult(
             content=[
                 types.TextContent(
-                    type="text", text=f"Resource '{uri}' not found for unsubscription!"
+                    type="text",
+                    text=f"Resource '{uri}' not found for unsubscription!",
                 )
             ],
             isError=True,
@@ -498,28 +506,14 @@ class MCPProxyServer(server.Server):
     async def _set_logging_level(
         self, req: types.SetLevelRequest
     ) -> types.ServerResult:
-        """Broadcast a new logging level to all connected clients."""
-        for client in self.client_manager.clients.values():
-            try:
-                await client.set_logging_level(req.params.level)
-            except Exception as e:
-                self.logger.error(f"❌ Failed to set logging level on client: {e}")
-
-        return types.ServerResult(types.EmptyResult())
+        """Broadcast logging level to backends. Currently unregistered — see _register_request_handlers."""
+        raise NotImplementedError("Handler not registered; re-enable in _register_request_handlers if needed")
 
     async def _send_progress_notification(
         self, req: types.ProgressNotification
     ) -> None:
-        """Relay a progress update to all backend clients."""
-        for client in self.client_manager.clients.values():
-            try:
-                await client.send_progress_notification(
-                    req.params.progressToken,
-                    req.params.progress,
-                    req.params.total,
-                )
-            except Exception as e:
-                self.logger.error(f"❌ Failed to send progress notification: {e}")
+        """Relay progress to backends. Currently unregistered — wrong MCP direction."""
+        raise NotImplementedError("Handler not registered; MCP progress is server→client")
 
     def _register_request_handlers(self) -> None:
         """Dynamically registers handlers for all MCP requests."""
@@ -537,11 +531,11 @@ class MCPProxyServer(server.Server):
         self.request_handlers[types.ListToolsRequest] = self._list_tools
         self.request_handlers[types.CallToolRequest] = self._call_tool
 
-        self.notification_handlers[types.ProgressNotification] = (
-            self._send_progress_notification
-        )
-
-        self.request_handlers[types.SetLevelRequest] = self._set_logging_level
+        # NOTE: ProgressNotification and SetLevelRequest handlers removed.
+        # MCP progress flows server→client (not client→server), so relaying
+        # client progress to backends is wrong direction per spec.
+        # SetLevelRequest could be valid for a proxy but is unused by any
+        # known MCP client. Re-add if a real use case emerges.
 
     async def _initialize_tools_for_client(
         self, server_name: str, client: ClientSession
@@ -604,13 +598,21 @@ class MCPProxyServer(server.Server):
         return (parts[0], parts[1])
 
     async def _on_server_disconnected(self, server_name: str) -> None:
-        """Reset tool mappings for a disconnected server and notify client."""
+        """Reset tool, prompt, and resource mappings for a disconnected server and notify client."""
         async with self._register_lock:
             for key, mapping in self.tool_to_server.items():
                 if mapping.server_name == server_name:
                     mapping.client = None
+            for key, mapping in self.prompt_to_server.items():
+                if mapping.server_name == server_name:
+                    mapping.client = None
+            for key, mapping in self.resource_to_server.items():
+                if mapping.server_name == server_name:
+                    mapping.client = None
         await self._send_tools_list_changed()
-        self.logger.info(f"🔄 Reset tool mappings for disconnected server '{server_name}'")
+        await self._send_prompts_list_changed()
+        await self._send_resources_list_changed()
+        self.logger.info(f"🔄 Reset tool, prompt, and resource mappings for disconnected server '{server_name}'")
 
     async def _send_tools_list_changed(self) -> None:
         """Send tools/list_changed notification if a session is active."""

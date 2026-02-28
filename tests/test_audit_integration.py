@@ -84,7 +84,7 @@ class TestAuditIntegration:
             entry = json.loads(f.readline())
 
         assert entry["event_type"] == "tool_call"
-        assert entry["tool_name"] == "calculator__add"
+        assert entry["tool_name"] == "add"  # Original name, not namespaced
         assert entry["server_name"] == "calculator"
         assert entry["arguments"] == {"a": 5, "b": 3}
         assert entry["status"] == "success"
@@ -125,7 +125,7 @@ class TestAuditIntegration:
             entry = json.loads(f.readline())
 
         assert entry["event_type"] == "tool_call"
-        assert entry["tool_name"] == "test__broken"
+        assert entry["tool_name"] == "broken"  # Original name, not namespaced
         assert entry["server_name"] == "test"
         assert entry["status"] == "error"
         assert "Connection timeout" in entry["error"]
