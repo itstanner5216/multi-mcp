@@ -621,18 +621,6 @@ class MCPClientManager:
 
         return self.clients
 
-    def get_client(self, name: str) -> Optional[ClientSession]:
-        """
-        Retrieves an existing client by name.
-
-        Args:
-            name (str): The name of the client (as defined in config).
-
-        Returns:
-            Optional[ClientSession]: The ClientSession object, or None if not found.
-        """
-        return self.clients.get(name)
-
     async def close(self) -> None:
         """
         Closes all clients and releases resources managed by the async context stack.
