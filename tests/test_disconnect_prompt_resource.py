@@ -161,3 +161,55 @@ class TestDisconnectNotifications:
         proxy._send_tools_list_changed.assert_awaited_once()
         proxy._send_prompts_list_changed.assert_awaited_once()
         proxy._send_resources_list_changed.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Ghost mapping tests (unregister after disconnect)
+# ---------------------------------------------------------------------------
+
+
+class TestUnregisterAfterDisconnectRemovesGhosts:
+    """Ghost tool/prompt/resource bug: unregister must remove mappings
+    even after disconnect sets client=None."""
+
+    @pytest.mark.asyncio
+    async def test_ghost_tools_removed(self):
+        """Disconnect sets client=None; unregister should STILL remove tools."""
+        proxy = _make_proxy()
+        c1 = _make_mock_client()
+        c2 = _make_mock_client()
+        _add_tool(proxy, "srvA", "srvA__tool1", c1)
+        _add_tool(proxy, "srvB", "srvB__tool2", c2)
+        proxy.client_manager.clients["srvA"] = c1
+        proxy.client_manager.clients["srvB"] = c2
+
+        await proxy._on_server_disconnected("srvA")
+        assert proxy.tool_to_server["srvA__tool1"].client is None
+
+        await proxy.unregister_client("srvA")
+        assert "srvA__tool1" not in proxy.tool_to_server
+        assert "srvB__tool2" in proxy.tool_to_server
+
+    @pytest.mark.asyncio
+    async def test_ghost_prompts_removed(self):
+        """After disconnect + unregister, prompts should not persist."""
+        proxy = _make_proxy()
+        c1 = _make_mock_client()
+        _add_prompt(proxy, "srvA", "srvA__p1", c1)
+        proxy.client_manager.clients["srvA"] = c1
+
+        await proxy._on_server_disconnected("srvA")
+        await proxy.unregister_client("srvA")
+        assert "srvA__p1" not in proxy.prompt_to_server
+
+    @pytest.mark.asyncio
+    async def test_ghost_resources_removed(self):
+        """After disconnect + unregister, resources should not persist."""
+        proxy = _make_proxy()
+        c1 = _make_mock_client()
+        _add_resource(proxy, "srvA", "srvA__r1", c1, "res://x")
+        proxy.client_manager.clients["srvA"] = c1
+
+        await proxy._on_server_disconnected("srvA")
+        await proxy.unregister_client("srvA")
+        assert "srvA__r1" not in proxy.resource_to_server

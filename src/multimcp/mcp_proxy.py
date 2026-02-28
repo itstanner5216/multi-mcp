@@ -181,15 +181,17 @@ class MCPProxyServer(server.Server):
 
             self.capabilities.pop(name, None)
 
-            # Fix: correct filter condition - remove entries where client matches
+            # Fix: filter by server_name, not client identity.
+            # After disconnect, client is set to None, so v.client != client
+            # would be True (None != original_client), keeping ghost entries.
             self.tool_to_server = {
-                k: v for k, v in self.tool_to_server.items() if v.client != client
+                k: v for k, v in self.tool_to_server.items() if v.server_name != name
             }
             self.prompt_to_server = {
-                k: v for k, v in self.prompt_to_server.items() if v.client != client
+                k: v for k, v in self.prompt_to_server.items() if v.server_name != name
             }
             self.resource_to_server = {
-                k: v for k, v in self.resource_to_server.items() if v.client != client
+                k: v for k, v in self.resource_to_server.items() if v.server_name != name
             }
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
