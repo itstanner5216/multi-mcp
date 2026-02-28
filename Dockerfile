@@ -18,8 +18,8 @@ ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 ENV PYTHONPATH=/app
 
-# Copy production config file
-COPY ./msc/mcp.json /app/mcp.json
+# Copy production config file if it exists
+RUN test -f ./msc/mcp.json && cp ./msc/mcp.json /app/mcp.json || true
 
 # Start app
 
