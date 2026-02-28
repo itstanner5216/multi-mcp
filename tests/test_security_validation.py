@@ -56,3 +56,36 @@ class TestEnvVarProtection:
         env = {"API_KEY": "abc123", "DATABASE_URL": "postgres://...", "LOG_LEVEL": "DEBUG"}
         filtered = _filter_env(env)
         assert filtered == env
+
+
+class TestCommandValidation:
+    """Verify _validate_command rejects path traversal and unknown commands."""
+
+    def test_allows_bare_allowed_command(self):
+        """Bare command names in allowlist should pass."""
+        # Should not raise
+        _validate_command("node")
+        _validate_command("npx")
+        _validate_command("python")
+        _validate_command("uv")
+
+    def test_rejects_unknown_command(self):
+        """Commands not in allowlist should be rejected."""
+        with pytest.raises(ValueError, match="not in allowed"):
+            _validate_command("malicious_binary")
+
+    def test_rejects_path_traversal(self):
+        """Commands with path separators should be rejected — prevents trojanized binaries."""
+        with pytest.raises(ValueError):
+            _validate_command("/tmp/node")
+        with pytest.raises(ValueError):
+            _validate_command("../node")
+        with pytest.raises(ValueError):
+            _validate_command("/malicious/path/node")
+        with pytest.raises(ValueError):
+            _validate_command("./local/node")
+
+    def test_rejects_relative_path(self):
+        """Relative paths should be rejected."""
+        with pytest.raises(ValueError):
+            _validate_command("subdir/node")

@@ -59,8 +59,9 @@ class TestCommandValidation:
                 _validate_command(cmd)
 
     def test_command_basename_extracted(self):
-        """Full path to an allowed command should pass (basename is 'node')."""
-        _validate_command("/usr/bin/node")  # must not raise
+        """Full paths are rejected — only bare command names are allowed (path traversal fix)."""
+        with pytest.raises(ValueError):
+            _validate_command("/usr/bin/node")  # path separators are now rejected
 
     def test_disallowed_full_path_raises(self):
         """Full path whose basename is not allowed must raise ValueError."""

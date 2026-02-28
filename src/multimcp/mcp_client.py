@@ -59,15 +59,16 @@ def _get_allowed_commands() -> set:
 
 
 def _validate_command(command: str) -> None:
-    """Raise ValueError if command is not in the allowed list."""
-    # Extract just the basename in case a full path is provided
+    """Validate that the command is in the allowed list and has no path components."""
+    if os.sep in command or "/" in command or "\\" in command:
+        raise ValueError(
+            f"Command '{command}' contains path separators — only bare command names are allowed"
+        )
     cmd_name = os.path.basename(command)
     allowed = _get_allowed_commands()
     if cmd_name not in allowed:
         raise ValueError(
-            f"Command '{command}' is not in the allowed commands list. "
-            f"Allowed: {sorted(allowed)}. "
-            f"Set MULTI_MCP_ALLOWED_COMMANDS to override."
+            f"Command '{cmd_name}' is not in allowed commands: {allowed}"
         )
 
 
