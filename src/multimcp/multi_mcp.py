@@ -116,8 +116,13 @@ class MultiMCP:
         plugin_servers = self._scan_claude_plugins()
         if plugin_servers:
             self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
-            # Don't overwrite JSON-defined servers with plugin versions
             for name, srv in plugin_servers.items():
+                if name not in json_servers:
+                    json_servers[name] = srv
+
+        desktop_servers = self._scan_claude_desktop_configs()
+        if desktop_servers:
+            for name, srv in desktop_servers.items():
                 if name not in json_servers:
                     json_servers[name] = srv
 
@@ -175,6 +180,44 @@ class MultiMCP:
                     continue  # Skip entries with empty command list
             normalized[name] = srv
         return normalized
+
+    def _scan_claude_desktop_configs(self) -> dict[str, dict]:
+        """Scan standard Claude Desktop config locations for MCP server definitions.
+
+        Claude Desktop stores its MCP server list in claude_desktop_config.json.
+        Locations vary by OS:
+          Linux:   ~/.config/Claude/claude_desktop_config.json
+          macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json
+          Windows: %APPDATA%/Claude/claude_desktop_config.json
+
+        Skips the 'multi-mcp' entry to avoid connecting to ourselves as a backend.
+        """
+        candidates = [
+            Path.home() / ".config" / "Claude" / "claude_desktop_config.json",
+            Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
+        ]
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            candidates.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
+
+        servers: dict[str, dict] = {}
+        for cfg_path in candidates:
+            if not cfg_path.exists():
+                continue
+            try:
+                with open(cfg_path) as f:
+                    data = json.load(f)
+                extracted = self._extract_mcp_servers(data)
+                # Skip self-referential entry to avoid connecting to ourselves as a backend
+                extracted.pop("multi-mcp", None)
+                if extracted:
+                    self.logger.info(
+                        f"🖥️ Found {len(extracted)} server(s) in Claude Desktop config: {cfg_path}"
+                    )
+                    servers.update(extracted)
+            except (json.JSONDecodeError, OSError) as e:
+                self.logger.warning(f"⚠️ Failed to read Claude Desktop config {cfg_path}: {e}")
+        return servers
 
     def _scan_claude_plugins(self) -> dict[str, dict]:
         """Scan Claude Code plugin cache for active MCP server configs.
@@ -269,11 +312,18 @@ class MultiMCP:
                         except (json.JSONDecodeError, OSError) as e:
                             self.logger.warning(f"⚠️ Failed to read source {filepath}: {e}")
 
-            # Always scan Claude plugin cache
+            # Always scan Claude Code plugin cache
             plugin_servers = self._scan_claude_plugins()
             if plugin_servers:
                 self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
                 for name, srv in plugin_servers.items():
+                    if name not in all_json_servers:
+                        all_json_servers[name] = srv
+
+            # Always scan Claude Desktop config (picks up desktop-commander etc.)
+            desktop_servers = self._scan_claude_desktop_configs()
+            if desktop_servers:
+                for name, srv in desktop_servers.items():
                     if name not in all_json_servers:
                         all_json_servers[name] = srv
 
