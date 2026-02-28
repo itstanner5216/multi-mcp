@@ -2,7 +2,7 @@
 MCP Trigger Manager for keyword-based automatic server activation.
 """
 
-from typing import List, Dict
+from typing import List
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.keyword_matcher import (
     extract_keywords_from_message,

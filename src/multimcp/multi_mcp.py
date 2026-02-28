@@ -58,8 +58,10 @@ class MultiMCP:
 
     def _on_task_done(self, task: asyncio.Task) -> None:
         self._bg_tasks.discard(task)
-        if not task.cancelled() and task.exception():
-            self.logger.error(f"❌ Background task '{task.get_name()}' failed: {task.exception()}")
+        if not task.cancelled():
+            exc = task.exception()
+            if exc:
+                self.logger.error(f"❌ Background task '{task.get_name()}' failed: {exc}")
 
     @property
     def auth_enabled(self) -> bool:
