@@ -52,6 +52,8 @@ class MCPProxyServer(server.Server):
         self._server_session: Optional[ServerSession] = None
         # Initialize trigger manager
         self.trigger_manager = MCPTriggerManager(client_manager)
+        # Stores Resource objects by URI for _list_resources (resource_to_server only stores ClientSession)
+        self._resource_objects: dict[str, types.Resource] = {}
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -144,6 +146,8 @@ class MCPProxyServer(server.Server):
                         continue
                     uri_str = str(resource.uri)
                     self.resource_to_server[uri_str] = client
+                    # Also store the Resource object for _list_resources
+                    self._resource_objects[uri_str] = resource
             except Exception as e:
                 self.logger.warning(f"⚠️ '{name}' advertises resources but list_resources failed: {e}")
 
@@ -186,9 +190,14 @@ class MCPProxyServer(server.Server):
             self.prompt_to_server = {
                 k: v for k, v in self.prompt_to_server.items() if v.client != client
             }
+            # Find URIs belonging to this client before clearing them
+            uris_to_remove = {k for k, v in self.resource_to_server.items() if v == client}
             self.resource_to_server = {
                 k: v for k, v in self.resource_to_server.items() if v != client
             }
+            # Clean up stored Resource objects for removed URIs
+            for uri in uris_to_remove:
+                self._resource_objects.pop(uri, None)
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
 
@@ -350,12 +359,13 @@ class MCPProxyServer(server.Server):
     async def _get_prompt(self, req: types.GetPromptRequest) -> types.ServerResult:
         """Fetch a specific prompt from the correct backend MCP server."""
         prompt_name = req.params.name
-        client = self.prompt_to_server.get(prompt_name)
+        # prompt_to_server stores PromptMapping objects; use .client to get the ClientSession
+        prompt_mapping = self.prompt_to_server.get(prompt_name)
 
-        if client:
+        if prompt_mapping:
             try:
                 _, original_name = self._split_key(prompt_name)
-                result = await client.get_prompt(original_name, req.params.arguments)
+                result = await prompt_mapping.client.get_prompt(original_name, req.params.arguments)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to get prompt '{prompt_name}': {e}")
@@ -374,18 +384,19 @@ class MCPProxyServer(server.Server):
     async def _complete(self, req: types.CompleteRequest) -> types.ServerResult:
         """Execute a prompt completion on the relevant MCP server."""
         prompt_name = None
-        client = None
+        # prompt_to_server stores PromptMapping objects; use .client to get the ClientSession
+        prompt_mapping = None
         if hasattr(req.params.ref, 'name'):
             prompt_name = req.params.ref.name
-            client = self.prompt_to_server.get(prompt_name)
+            prompt_mapping = self.prompt_to_server.get(prompt_name)
 
-        if client:
+        if prompt_mapping:
             try:
                 ref = req.params.ref
                 if hasattr(ref, 'name'):
                     _, original_name = self._split_key(ref.name)
                     ref = ref.model_copy(update={"name": original_name})
-                result = await client.complete(ref, req.params.argument)
+                result = await prompt_mapping.client.complete(ref, req.params.argument)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to complete prompt '{prompt_name}': {e}")
@@ -404,12 +415,10 @@ class MCPProxyServer(server.Server):
 
     ## Resources capabilities
     async def _list_resources(self, _: Any) -> types.ServerResult:
-        """Return cached resources from all remote MCP servers with namespacing."""
-        all_resources = []
-        for key, mapping in self.resource_to_server.items():
-            namespaced_resource = mapping.resource.model_copy()
-            namespaced_resource.name = key
-            all_resources.append(namespaced_resource)
+        """Return cached resources from all remote MCP servers.
+        Resources are stored by raw URI (globally unique, no namespacing needed).
+        Uses _resource_objects for the Resource data; resource_to_server maps URI->client."""
+        all_resources = list(self._resource_objects.values())
         return types.ServerResult(resources=all_resources)
 
     async def _read_resource(

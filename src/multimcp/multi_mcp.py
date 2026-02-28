@@ -591,23 +591,18 @@ class MultiMCP:
                 )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
+                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
+            except ValueError as e:
+                # Security validation failure (command not allowed, SSRF attempt, etc.)
+                # Must come before generic Exception to avoid swallowing security rejections
+                self.logger.warning(f"⚠️ Rejected /mcp_servers POST: {e}")
+                return JSONResponse({"error": str(e)}, status_code=403)
             except Exception as connect_err:
+                # Connection failure — servers already added as pending, fall back to lazy connect
                 self.logger.warning(
                     f"⚠️ Eager connect failed for {added}, will connect on first use: {connect_err}"
                 )
-
-                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
-
-            except ValueError as e:
-                # Security validation failure (command not allowed, SSRF attempt, etc.)
-                self.logger.warning(f"⚠️ Rejected /mcp_servers POST: {e}")
-                return JSONResponse({"error": str(e)}, status_code=403)
-            except Exception as e:
-                self.logger.error(f"❌ Error adding MCP servers: {e}")
-                return JSONResponse(
-                    {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
-                    status_code=500,
-                )
+                return JSONResponse({"message": f"Added {added}"})
 
         elif method == "DELETE":
             name = request.path_params.get("name")
