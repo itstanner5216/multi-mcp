@@ -26,9 +26,18 @@ class ServerConfig(BaseModel):
     triggers: list[str] = Field(default_factory=list)
 
 
+class RetrievalSettings(BaseModel):
+    """Configuration for the intelligent tool retrieval pipeline."""
+    enabled: bool = False
+    top_k: int = Field(default=10, ge=1)
+    full_description_count: int = Field(default=3, ge=0)
+    anchor_tools: list[str] = Field(default_factory=list)
+
+
 class MultiMCPConfig(BaseModel):
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
+    retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
 
 
 def load_config(path: Path) -> MultiMCPConfig:
