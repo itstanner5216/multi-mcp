@@ -145,6 +145,7 @@ class MCPClientManager:
         self.idle_timeouts.pop(name, None)
         self.last_used.pop(name, None)
         self._creation_locks.pop(name, None)
+        self.clients.pop(name, None)
         stack = self.server_stacks.pop(name, None)
         if stack:
             # Stack should already be closed by caller, but safety net

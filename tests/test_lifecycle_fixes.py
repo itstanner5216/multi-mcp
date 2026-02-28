@@ -8,7 +8,12 @@ from src.multimcp.mcp_client import MCPClientManager
 
 @pytest.mark.asyncio
 async def test_reconnect_closes_old_stack():
-    """When reconnecting, old AsyncExitStack must be closed before creating new one."""
+    """_create_single_client must close an existing stack before creating a new one."""
+    from unittest.mock import patch, AsyncMock, MagicMock
+    import asyncio
+    from contextlib import AsyncExitStack
+    from src.multimcp.mcp_client import MCPClientManager
+
     mgr = MCPClientManager.__new__(MCPClientManager)
     mgr.server_stacks = {}
     mgr.clients = {}
@@ -26,19 +31,33 @@ async def test_reconnect_closes_old_stack():
     mgr._connection_semaphore = asyncio.Semaphore(10)
     mgr._connection_timeout = 30.0
 
-    # Simulate an existing stack that wasn't properly cleaned
+    # Install old stack for server — this is what should be closed on reconnect
     old_stack = AsyncMock(spec=AsyncExitStack)
     mgr.server_stacks["test_server"] = old_stack
 
-    # Verify that creating a new client for the same server closes the old stack
-    if "test_server" in mgr.server_stacks:
-        existing_stack = mgr.server_stacks["test_server"]
-        try:
-            await existing_stack.aclose()
-        except Exception:
-            pass
+    # Mock the transport and session so _create_single_client can complete
+    server_config = {"command": "node", "args": [], "env": {}}
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock(return_value=MagicMock())
 
+    with patch("src.multimcp.mcp_client.stdio_client") as mock_stdio, \
+         patch("src.multimcp.mcp_client.ClientSession") as mock_cs:
+        # Make stdio_client an async context manager that yields (read, write)
+        mock_read, mock_write = AsyncMock(), AsyncMock()
+        mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+        mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Make ClientSession an async context manager that yields the session
+        mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await mgr._create_single_client("test_server", server_config)
+
+    # The old stack MUST have been closed before creating the new client
     old_stack.aclose.assert_called_once()
+    # And a new stack must have been registered
+    assert "test_server" in mgr.server_stacks
+    assert mgr.server_stacks["test_server"] is not old_stack
 
 
 def test_cleanup_server_state_removes_all_entries():
@@ -51,6 +70,7 @@ def test_cleanup_server_state_removes_all_entries():
     mgr.last_used = {"srv": 12345.0}
     mgr._creation_locks = {"srv": asyncio.Lock()}
     mgr.server_stacks = {}
+    mgr.clients = {"srv": MagicMock()}
     mgr.logger = MagicMock()
 
     mgr.cleanup_server_state("srv")
@@ -61,3 +81,4 @@ def test_cleanup_server_state_removes_all_entries():
     assert "srv" not in mgr.idle_timeouts
     assert "srv" not in mgr.last_used
     assert "srv" not in mgr._creation_locks
+    assert "srv" not in mgr.clients
