@@ -409,7 +409,7 @@ class MCPProxyServer(server.Server):
 
     ## Resources capabilities
     async def _list_resources(self, _: Any) -> types.ServerResult:
-        """Return cached resources from all remote MCP servers with namespacing."""
+        """Return cached resources from all remote MCP servers."""
         all_resources = []
         for key, mapping in self.resource_to_server.items():
             namespaced_resource = mapping.resource.model_copy()

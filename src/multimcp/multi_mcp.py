@@ -591,6 +591,7 @@ class MultiMCP:
                 )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
+                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
             except ValueError as e:
                 # Security validation failure (command not allowed, SSRF attempt, etc.)
                 self.logger.warning(f"⚠️ Rejected /mcp_servers POST: {e}")
