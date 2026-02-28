@@ -12,6 +12,7 @@ class ToolEntry(BaseModel):
     enabled: bool = True
     stale: bool = False
     description: str = ""
+    input_schema: Optional[dict] = None
 
 
 class ServerConfig(BaseModel):

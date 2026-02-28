@@ -93,7 +93,11 @@ class MCPProxyServer(server.Server):
                 cached_tool = types.Tool(
                     name=key,
                     description=tool_entry.description,
-                    inputSchema={"type": "object", "properties": {}},
+                    inputSchema=(
+                        tool_entry.input_schema
+                        if tool_entry.input_schema is not None
+                        else {"type": "object", "properties": {}}
+                    ),
                 )
                 self.tool_to_server[key] = ToolMapping(
                     server_name=server_name,

@@ -28,15 +28,20 @@ def merge_discovered_tools(
 
     # Add or update discovered tools
     for tool in discovered:
+        # Use getattr: Pydantic v2 doesn't expose model fields in dir(), so
+        # spec-based mocks raise AttributeError on direct access.
+        schema = getattr(tool, 'inputSchema', None)
         if tool.name in server.tools:
             entry = server.tools[tool.name]
             entry.description = tool.description or ""
+            entry.input_schema = schema
             entry.stale = False
         else:
             server.tools[tool.name] = ToolEntry(
                 enabled=True,
                 stale=False,
                 description=tool.description or "",
+                input_schema=schema,
             )
 
     return config
