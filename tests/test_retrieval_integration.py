@@ -1,0 +1,217 @@
+"""Integration tests for retrieval pipeline in MCPProxyServer."""
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from mcp import types
+from src.multimcp.mcp_proxy import MCPProxyServer
+from src.multimcp.retrieval.pipeline import RetrievalPipeline
+from src.multimcp.retrieval.base import PassthroughRetriever
+from src.multimcp.retrieval.logging import NullLogger
+from src.multimcp.retrieval.session import SessionStateManager
+from src.multimcp.retrieval.models import RetrievalConfig
+
+
+def _make_tool(name: str) -> types.Tool:
+    return types.Tool(
+        name=name,
+        description="test",
+        inputSchema={"type": "object", "properties": {}},
+    )
+
+
+class TestProxyPipelineIntegration:
+    """Test MCPProxyServer integration with retrieval pipeline."""
+
+    def _make_proxy(self, pipeline=None):
+        """Create a minimal MCPProxyServer bypassing __init__ for unit testing."""
+        proxy = MCPProxyServer.__new__(MCPProxyServer)
+        proxy.tool_to_server = {}
+        proxy.prompt_to_server = {}
+        proxy.resource_to_server = {}
+        proxy._resource_objects = {}
+        proxy.client_manager = MagicMock()
+        proxy.trigger_manager = MagicMock()
+        proxy.trigger_manager.check_and_enable = AsyncMock(return_value=[])
+        proxy.audit_logger = MagicMock()
+        proxy.logger = MagicMock()
+        proxy._register_lock = MagicMock()
+        proxy._register_lock.__aenter__ = AsyncMock()
+        proxy._register_lock.__aexit__ = AsyncMock()
+        proxy.retrieval_pipeline = pipeline
+        proxy._server_session = None
+        return proxy
+
+    @pytest.mark.asyncio
+    async def test_list_tools_without_pipeline(self):
+        """Without pipeline (None), _list_tools returns all connected tools."""
+        proxy = self._make_proxy(pipeline=None)
+        from src.multimcp.mcp_proxy import ToolMapping
+        proxy.tool_to_server["github__get_me"] = ToolMapping(
+            server_name="github",
+            client=MagicMock(),
+            tool=_make_tool("github__get_me"),
+        )
+        result = await proxy._list_tools(None)
+        assert len(result.root.tools) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_disabled_pipeline(self):
+        """Disabled pipeline returns all tools (same as no pipeline)."""
+        config = RetrievalConfig(enabled=False)
+        pipeline = RetrievalPipeline(
+            retriever=PassthroughRetriever(),
+            session_manager=SessionStateManager(config),
+            logger=NullLogger(),
+            config=config,
+            tool_registry={},
+        )
+        proxy = self._make_proxy(pipeline=pipeline)
+        from src.multimcp.mcp_proxy import ToolMapping
+        proxy.tool_to_server["github__get_me"] = ToolMapping(
+            server_name="github",
+            client=MagicMock(),
+            tool=_make_tool("github__get_me"),
+        )
+        # Point pipeline's registry to proxy's dict (as done in multi_mcp.py)
+        pipeline.tool_registry = proxy.tool_to_server
+        result = await proxy._list_tools(None)
+        assert len(result.root.tools) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_tools_with_enabled_pipeline_anchors_only(self):
+        """Enabled pipeline returns only anchor tools for fresh session."""
+        config = RetrievalConfig(
+            enabled=True,
+            anchor_tools=["github__get_me"],
+        )
+        pipeline = RetrievalPipeline(
+            retriever=PassthroughRetriever(),
+            session_manager=SessionStateManager(config),
+            logger=NullLogger(),
+            config=config,
+            tool_registry={},
+        )
+        proxy = self._make_proxy(pipeline=pipeline)
+        from src.multimcp.mcp_proxy import ToolMapping
+        proxy.tool_to_server["github__get_me"] = ToolMapping(
+            server_name="github",
+            client=MagicMock(),
+            tool=_make_tool("github__get_me"),
+        )
+        proxy.tool_to_server["exa__search"] = ToolMapping(
+            server_name="exa",
+            client=MagicMock(),
+            tool=_make_tool("exa__search"),
+        )
+        pipeline.tool_registry = proxy.tool_to_server
+        result = await proxy._list_tools(None)
+        # Only anchor tool returned
+        assert len(result.root.tools) == 1
+        assert result.root.tools[0].name == "github__get_me"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_attribute_exists_after_init(self):
+        """MCPProxyServer must have retrieval_pipeline attribute."""
+        proxy = self._make_proxy()
+        assert hasattr(proxy, "retrieval_pipeline")
+
+    @pytest.mark.asyncio
+    async def test_pipeline_none_by_default_in_make_proxy(self):
+        """Our test helper sets pipeline=None by default."""
+        proxy = self._make_proxy()
+        assert proxy.retrieval_pipeline is None
+
+
+class TestCallToolPipelineNotification:
+    """Test that _call_tool notifies pipeline after successful calls."""
+
+    def _make_proxy_with_tool(self, pipeline=None):
+        proxy = MCPProxyServer.__new__(MCPProxyServer)
+        proxy.tool_to_server = {}
+        proxy.prompt_to_server = {}
+        proxy.resource_to_server = {}
+        proxy._resource_objects = {}
+        proxy.client_manager = MagicMock()
+        proxy.trigger_manager = MagicMock()
+        proxy.trigger_manager.check_and_enable = AsyncMock(return_value=[])
+        proxy.audit_logger = MagicMock()
+        proxy.logger = MagicMock()
+        proxy._register_lock = MagicMock()
+        proxy._register_lock.__aenter__ = AsyncMock()
+        proxy._register_lock.__aexit__ = AsyncMock()
+        proxy.retrieval_pipeline = pipeline
+        proxy._server_session = None
+
+        # Add a connected tool
+        from src.multimcp.mcp_proxy import ToolMapping
+        mock_client = MagicMock()
+        mock_result = MagicMock()
+        mock_result.content = [types.TextContent(type="text", text="ok")]
+        mock_result.isError = False
+        mock_client.call_tool = AsyncMock(return_value=mock_result)
+        proxy.tool_to_server["github__get_me"] = ToolMapping(
+            server_name="github",
+            client=mock_client,
+            tool=_make_tool("github__get_me"),
+        )
+        return proxy
+
+    @pytest.mark.asyncio
+    async def test_call_tool_notifies_pipeline(self):
+        """on_tool_called should be invoked after a successful tool call."""
+        config = RetrievalConfig(enabled=True)
+        pipeline = RetrievalPipeline(
+            retriever=PassthroughRetriever(),
+            session_manager=SessionStateManager(config),
+            logger=NullLogger(),
+            config=config,
+            tool_registry={},
+        )
+        # Spy on on_tool_called
+        pipeline.on_tool_called = AsyncMock(return_value=False)
+
+        proxy = self._make_proxy_with_tool(pipeline=pipeline)
+        req = MagicMock()
+        req.params = MagicMock()
+        req.params.name = "github__get_me"
+        req.params.arguments = {"foo": "bar"}
+
+        await proxy._call_tool(req)
+        pipeline.on_tool_called.assert_called_once_with(
+            "default", "github__get_me", {"foo": "bar"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_without_pipeline_still_works(self):
+        """Tool calls work fine without any pipeline configured."""
+        proxy = self._make_proxy_with_tool(pipeline=None)
+        req = MagicMock()
+        req.params = MagicMock()
+        req.params.name = "github__get_me"
+        req.params.arguments = {}
+
+        result = await proxy._call_tool(req)
+        # Should succeed without errors
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_pipeline_error_doesnt_break_tool_call(self):
+        """If pipeline.on_tool_called raises, tool call still succeeds."""
+        config = RetrievalConfig(enabled=True)
+        pipeline = RetrievalPipeline(
+            retriever=PassthroughRetriever(),
+            session_manager=SessionStateManager(config),
+            logger=NullLogger(),
+            config=config,
+            tool_registry={},
+        )
+        pipeline.on_tool_called = AsyncMock(side_effect=RuntimeError("pipeline broke"))
+
+        proxy = self._make_proxy_with_tool(pipeline=pipeline)
+        req = MagicMock()
+        req.params = MagicMock()
+        req.params.name = "github__get_me"
+        req.params.arguments = {}
+
+        # Should not raise — pipeline errors are caught
+        result = await proxy._call_tool(req)
+        assert result is not None

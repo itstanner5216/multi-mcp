@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 import asyncio
 from mcp import server, types
 from mcp.client.session import ClientSession
@@ -8,6 +8,9 @@ from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.audit import AuditLogger
 from src.multimcp.mcp_trigger_manager import MCPTriggerManager
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from src.multimcp.retrieval.pipeline import RetrievalPipeline
 
 
 @dataclass
@@ -52,6 +55,8 @@ class MCPProxyServer(server.Server):
         self._server_session: Optional[ServerSession] = None
         # Initialize trigger manager
         self.trigger_manager = MCPTriggerManager(client_manager)
+        # Optional retrieval pipeline (None = passthrough, all tools returned)
+        self.retrieval_pipeline: Optional["RetrievalPipeline"] = None
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -215,7 +220,12 @@ class MCPProxyServer(server.Server):
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
-        and updated dynamically when servers are added/removed."""
+        and updated dynamically when servers are added/removed.
+        When a retrieval pipeline is configured, delegates to it for filtering."""
+        if self.retrieval_pipeline is not None:
+            # TODO: extract real session_id from MCP request context when available
+            tools = await self.retrieval_pipeline.get_tools_for_list("default")
+            return types.ServerResult(tools=tools)
         all_tools = [mapping.tool for mapping in self.tool_to_server.values() if mapping.client is not None]
         return types.ServerResult(tools=all_tools)
 
@@ -303,6 +313,17 @@ class MCPProxyServer(server.Server):
                 # Refresh idle timer so active servers aren't evicted
                 if self.client_manager:
                     self.client_manager.record_usage(tool_item.server_name)
+
+                # Notify retrieval pipeline of tool usage (progressive disclosure)
+                if self.retrieval_pipeline is not None:
+                    try:
+                        disclosed = await self.retrieval_pipeline.on_tool_called(
+                            "default", tool_name, arguments
+                        )
+                        if disclosed:
+                            await self._send_tools_list_changed()
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Retrieval pipeline error on tool call: {e}")
 
                 return types.ServerResult(result)
             except Exception as e:

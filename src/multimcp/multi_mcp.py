@@ -361,6 +361,22 @@ class MultiMCP:
             self.proxy = await MCPProxyServer.create(self.client_manager)
             self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
+            # Initialize retrieval pipeline (disabled by default — passthrough mode)
+            from src.multimcp.retrieval.pipeline import RetrievalPipeline
+            from src.multimcp.retrieval.base import PassthroughRetriever
+            from src.multimcp.retrieval.logging import NullLogger
+            from src.multimcp.retrieval.session import SessionStateManager
+            from src.multimcp.retrieval.models import RetrievalConfig
+
+            retrieval_config = RetrievalConfig(enabled=False)
+            self.proxy.retrieval_pipeline = RetrievalPipeline(
+                retriever=PassthroughRetriever(),
+                session_manager=SessionStateManager(retrieval_config),
+                logger=NullLogger(),
+                config=retrieval_config,
+                tool_registry=self.proxy.tool_to_server,
+            )
+
             # Pre-populate tool list from YAML cache so tools are visible immediately
             self.proxy.load_tools_from_yaml(yaml_config)
 
