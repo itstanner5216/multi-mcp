@@ -275,7 +275,15 @@ async def run_all() -> int:
         server_task = asyncio.create_task(server.run())
         await asyncio.sleep(6)
 
-        try:
+        # Check if server task already died (e.g. port in use)
+        if server_task.done():
+            exc = server_task.exception() if not server_task.cancelled() else None
+            check("SSE server started successfully", False,
+                  f"server died: {exc}" if exc else "server task ended unexpectedly")
+            mm_mod.YAML_CONFIG_PATH = original_yaml_path
+            test_cfg.unlink(missing_ok=True)
+        else:
+          try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 # Health check
                 r = await client.get("http://127.0.0.1:18099/health")
@@ -296,13 +304,13 @@ async def run_all() -> int:
                 r3 = await client.get("http://127.0.0.1:18099/mcp_tools")
                 check("SSE /mcp_tools returns 200",    r3.status_code == 200)
 
-        except Exception as e:
+          except Exception as e:
             check("SSE server reachable",   False, str(e))
-        finally:
+          finally:
             server_task.cancel()
             try:
                 await server_task
-            except (asyncio.CancelledError, Exception):
+            except (asyncio.CancelledError, SystemExit, BaseException):
                 pass
             mm_mod.YAML_CONFIG_PATH = original_yaml_path
             test_cfg.unlink(missing_ok=True)
@@ -334,7 +342,14 @@ async def run_all() -> int:
         task5 = asyncio.create_task(srv5.run())
         await asyncio.sleep(6)
 
-        try:
+        if task5.done():
+            exc5 = task5.exception() if not task5.cancelled() else None
+            check("SSE MCP server started (port 18098)", False,
+                  f"server died: {exc5}" if exc5 else "ended unexpectedly")
+            mm_mod.YAML_CONFIG_PATH = original_yaml_path
+            test_cfg2.unlink(missing_ok=True)
+        else:
+          try:
             async with mcp_sse_client("http://127.0.0.1:18098/sse") as (read, write):
                 async with ClientSession(read, write) as mcp_client:
                     init = await mcp_client.initialize()
@@ -370,18 +385,18 @@ async def run_all() -> int:
                     out2 = call_r2.content[0].text if call_r2.content else ""
                     check("SSE MCP multiply(7,8) == 56",   "56" in str(out2),    f"got: {out2}")
 
-        except Exception as e:
-            import anyio
-            if isinstance(e, ExceptionGroup):
-                real = [ex for ex in e.exceptions if not isinstance(ex, anyio.ClosedResourceError)]
-                if real:
-                    check("SSE MCP protocol test", False, str(real[0]))
-            else:
-                check("SSE MCP protocol test", False, str(e))
-        finally:
+          except Exception as e:
+              import anyio
+              if isinstance(e, ExceptionGroup):
+                  real = [ex for ex in e.exceptions if not isinstance(ex, anyio.ClosedResourceError)]
+                  if real:
+                      check("SSE MCP protocol test", False, str(real[0]))
+              else:
+                  check("SSE MCP protocol test", False, str(e))
+          finally:
             task5.cancel()
             try: await task5
-            except (asyncio.CancelledError, Exception): pass
+            except (asyncio.CancelledError, SystemExit, BaseException): pass
             mm_mod.YAML_CONFIG_PATH = original_yaml_path
             test_cfg2.unlink(missing_ok=True)
 
@@ -499,6 +514,142 @@ async def run_all() -> int:
               f"results: {[getattr(getattr(r,'root',r),'content',r) for r in results7[:3]]}...")
 
     # ------------------------------------------------------------------ #
+    # PHASE 14: Agent-realistic tool sequences
+    # Simulates how an AI agent actually uses tools: chained calls, multi-
+    # server reasoning, rapid-fire bursts, result-dependent follow-ups,
+    # and interleaved error recovery.
+    # ------------------------------------------------------------------ #
+    header("PHASE 14: Agent-realistic tool sequences (multi-server chains)")
+
+    try:
+      async with AsyncExitStack() as stack:
+        # Stand up both backends through proxy (same as Phase 2)
+        cr, cw = await stack.enter_async_context(
+            stdio_client(StdioServerParameters(command="python3", args=[calc_path]))
+        )
+        calc_sess = await stack.enter_async_context(ClientSession(cr, cw))
+        await calc_sess.initialize()
+
+        vr, vw = await stack.enter_async_context(
+            stdio_client(StdioServerParameters(command="python3", args=[conv_path]))
+        )
+        conv_sess = await stack.enter_async_context(ClientSession(vr, vw))
+        await conv_sess.initialize()
+
+        mgr14 = MCPClientManager()
+        mgr14.clients["calc"]      = calc_sess
+        mgr14.clients["converter"] = conv_sess
+        mgr14.tool_filters["calc"]      = None
+        mgr14.tool_filters["converter"] = None
+        proxy14 = MCPProxyServer(mgr14)
+        await proxy14.initialize_single_client("calc",      calc_sess)
+        await proxy14.initialize_single_client("converter", conv_sess)
+
+        async def _call(tool: str, args: dict):
+            req = types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(name=tool, arguments=args),
+            )
+            res = await proxy14._call_tool(req)
+            text = str(res.root.content[0].text) if res.root.content else ""
+            return text, getattr(res.root, "isError", False)
+
+        # --- 14a: Chained reasoning (agent computes step by step) ---
+        # "What is (3+4) * 5?"  →  add(3,4) → multiply(result, 5)
+        step1, err1 = await _call("calc__add", {"a": 3, "b": 4})
+        check("14a: chain step 1 — add(3,4)=7", step1 == "7" and not err1, step1)
+        step2, err2 = await _call("calc__multiply", {"a": int(step1), "b": 5})
+        check("14a: chain step 2 — multiply(7,5)=35", step2 == "35" and not err2, step2)
+
+        # --- 14b: Cross-server reasoning ---
+        # "Convert 100°C to Fahrenheit, then add 10 to the result"
+        temp_raw, terr = await _call("converter__convert_temperature",
+            {"value": 100.0, "from_unit": "Celsius", "to_unit": "Fahrenheit"})
+        temp_f = float(temp_raw)
+        check("14b: cross-server step 1 — 100°C→°F=212", temp_f == 212.0 and not terr,
+              str(temp_f))
+        added, aerr = await _call("calc__add", {"a": int(temp_f), "b": 10})
+        check("14b: cross-server step 2 — 212+10=222", added == "222" and not aerr, added)
+
+        # --- 14c: Rapid-fire parallel burst (agent fires many calls at once) ---
+        tasks = [
+            _call("calc__add", {"a": i, "b": i * 10}) for i in range(1, 8)
+        ]
+        burst_results = await asyncio.gather(*tasks)
+        burst_ok = all(
+            int(txt) == i + i * 10 and not err
+            for i, (txt, err) in enumerate(burst_results, 1)
+        )
+        check("14c: 7 parallel add() calls all correct", burst_ok,
+              str([r[0] for r in burst_results]))
+
+        # --- 14d: Parallel across BOTH servers simultaneously ---
+        cross_tasks = [
+            _call("calc__multiply", {"a": 6, "b": 7}),
+            _call("converter__convert_length",
+                  {"value": 1.0, "from_unit": "miles", "to_unit": "kilometers"}),
+            _call("calc__add", {"a": 100, "b": 200}),
+            _call("converter__convert_temperature",
+                  {"value": 0.0, "from_unit": "Celsius", "to_unit": "Fahrenheit"}),
+        ]
+        cr1, cr2, cr3, cr4 = await asyncio.gather(*cross_tasks)
+        check("14d: parallel calc__multiply(6,7)=42", cr1[0] == "42" and not cr1[1], cr1[0])
+        check("14d: parallel miles→km ≈1.609", abs(float(cr2[0]) - 1.60934) < 0.01, cr2[0])
+        check("14d: parallel calc__add(100,200)=300", cr3[0] == "300" and not cr3[1], cr3[0])
+        check("14d: parallel 0°C→°F=32", float(cr4[0]) == 32.0 and not cr4[1], cr4[0])
+
+        # --- 14e: Error recovery — bad call then good call (agent retries) ---
+        bad_txt, bad_err = await _call("calc__add", {"a": "not_a_number", "b": 5})
+        check("14e: bad args returns error", bad_err, f"isError={bad_err}")
+        # Agent retries with correct args
+        good_txt, good_err = await _call("calc__add", {"a": 99, "b": 1})
+        check("14e: retry with good args succeeds", good_txt == "100" and not good_err,
+              good_txt)
+
+        # --- 14f: Nonexistent tool then valid tool (agent corrects itself) ---
+        ghost_req = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(name="calc__subtract", arguments={"a": 1, "b": 2}),
+        )
+        ghost_res = await proxy14._call_tool(ghost_req)
+        ghost_err = getattr(ghost_res.root, "isError", False)
+        check("14f: nonexistent tool returns error gracefully", ghost_err)
+        recover_txt, recover_err = await _call("calc__add", {"a": 1, "b": 2})
+        check("14f: valid call after ghost tool works", recover_txt == "3" and not recover_err,
+              recover_txt)
+
+        # --- 14g: Long chain — 10-step computation ---
+        # sum 1+2+3+...+10 by sequential add calls
+        running = 0
+        chain_ok = True
+        for i in range(1, 11):
+            txt, err = await _call("calc__add", {"a": running, "b": i})
+            running = int(txt)
+            if err:
+                chain_ok = False
+                break
+        check("14g: 10-step sequential chain = sum(1..10)=55",
+              running == 55 and chain_ok, str(running))
+
+        # --- 14h: tools/list between tool calls (agent refreshes tool list mid-convo) ---
+        list_req = types.ListToolsRequest(method="tools/list", params=None)
+        list_res = await proxy14._list_tools(list_req)
+        tnames14 = [t.name for t in list_res.root.tools]
+        check("14h: tools/list mid-conversation returns all 4",
+              len(tnames14) == 4 and "calc__add" in tnames14, str(tnames14))
+        # Immediately use a tool after listing
+        post_list, pl_err = await _call("calc__multiply", {"a": 8, "b": 8})
+        check("14h: tool call right after list works", post_list == "64" and not pl_err,
+              post_list)
+
+    except* Exception as eg:
+        import anyio
+        real = [e for e in eg.exceptions if not isinstance(e, anyio.ClosedResourceError)]
+        if real:
+            check("Phase 14 clean run", False, str(real))
+
+
+    # ------------------------------------------------------------------ #
     # PHASE 8: Runtime server add via POST /mcp_servers (port 18097)
     # ------------------------------------------------------------------ #
     header("PHASE 8: POST /mcp_servers — add server at runtime, call its tool")
@@ -513,7 +664,14 @@ async def run_all() -> int:
         task8 = asyncio.create_task(srv8.run())
         await asyncio.sleep(5)
 
-        try:
+        if task8.done():
+            exc8 = task8.exception() if not task8.cancelled() else None
+            check("Phase 8 SSE server started (port 18097)", False,
+                  f"server died: {exc8}" if exc8 else "ended unexpectedly")
+            mm_mod.YAML_CONFIG_PATH = original_yaml_path
+            test_cfg8.unlink(missing_ok=True)
+        else:
+          try:
             async with httpx.AsyncClient(timeout=10.0) as hc:
                 # Baseline: no servers
                 r = await hc.get("http://127.0.0.1:18097/mcp_servers")
@@ -563,12 +721,12 @@ async def run_all() -> int:
                 check("runtime_calc gone from both active and pending after DELETE",
                       "runtime_calc" not in all8b, str(body3))
 
-        except Exception as e:
+          except Exception as e:
             check("Phase 8 server reachable", False, str(e))
-        finally:
+          finally:
             task8.cancel()
             try: await task8
-            except (asyncio.CancelledError, Exception): pass
+            except (asyncio.CancelledError, SystemExit, BaseException): pass
             mm_mod.YAML_CONFIG_PATH = original_yaml_path
             test_cfg8.unlink(missing_ok=True)
 
@@ -686,7 +844,14 @@ if __name__ == "__main__":
         task11 = asyncio.create_task(srv11.run())
         await asyncio.sleep(5)
 
-        try:
+        if task11.done():
+            exc11 = task11.exception() if not task11.cancelled() else None
+            check("Phase 11 auth server started (port 18096)", False,
+                  f"server died: {exc11}" if exc11 else "ended unexpectedly")
+            mm_mod.YAML_CONFIG_PATH = original_yaml_path
+            test_cfg11.unlink(missing_ok=True)
+        else:
+          try:
             async with httpx.AsyncClient(timeout=5.0) as hc:
                 # No auth header → 401
                 r = await hc.get("http://127.0.0.1:18096/mcp_servers")
@@ -713,12 +878,12 @@ if __name__ == "__main__":
                                     headers={"Authorization": "Bearer super-secret-test-key"})
                 check("POST with correct key → not 401", r5.status_code != 401, str(r5.status_code))
 
-        except Exception as e:
+          except Exception as e:
             check("Phase 11 auth server reachable", False, str(e))
-        finally:
+          finally:
             task11.cancel()
             try: await task11
-            except (asyncio.CancelledError, Exception): pass
+            except (asyncio.CancelledError, SystemExit, BaseException): pass
             mm_mod.YAML_CONFIG_PATH = original_yaml_path
             test_cfg11.unlink(missing_ok=True)
 
