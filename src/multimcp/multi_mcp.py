@@ -414,6 +414,7 @@ class MultiMCP:
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+        self._yaml_config_cache = yaml_config  # available to toggle_tool for schema lookup
 
         # Register ALL servers as pending — proxy starts instantly from YAML cache
         # NOTE(M10): model_dump(exclude_none=True) strips fields set to None.
@@ -891,9 +892,62 @@ class MultiMCP:
                         status_code=500,
                     )
 
+            elif action == "toggle_tool":
+                tool_name = payload.get("tool")
+                enabled = payload.get("enabled")
+
+                if not tool_name:
+                    return JSONResponse(
+                        {"error": "Missing 'tool' in payload"}, status_code=400
+                    )
+                if enabled is None or not isinstance(enabled, bool):
+                    return JSONResponse(
+                        {"error": "'enabled' must be a boolean (true/false)"}, status_code=400
+                    )
+                if not server_name:
+                    return JSONResponse(
+                        {"error": "Missing 'server' in payload"}, status_code=400
+                    )
+
+                # Verify server is known (active or pending)
+                known = (
+                    server_name in self.proxy.client_manager.clients
+                    or server_name in self.proxy.client_manager.pending_configs
+                )
+                if not known:
+                    return JSONResponse(
+                        {"error": f"Unknown server '{server_name}'"}, status_code=404
+                    )
+
+                try:
+                    # Give proxy a reference to the YAML config for schema reconstruction
+                    self.proxy._yaml_config_ref = getattr(self, "_yaml_config_cache", None)
+                    result = await self.proxy.toggle_tool(server_name, tool_name, enabled)
+
+                    # Persist to YAML (best-effort — runtime state already updated)
+                    try:
+                        from src.multimcp.yaml_config import load_config, save_config
+                        cfg = load_config(YAML_CONFIG_PATH)
+                        srv = cfg.servers.get(server_name)
+                        if srv and tool_name in srv.tools:
+                            srv.tools[tool_name].enabled = enabled
+                            save_config(cfg, YAML_CONFIG_PATH)
+                    except Exception as yaml_err:
+                        self.logger.warning(
+                            f"⚠️ Could not persist tool toggle to YAML: {yaml_err}"
+                        )
+
+                    return JSONResponse(result)
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to toggle tool '{tool_name}': {e}")
+                    return JSONResponse(
+                        {"error": "Failed to toggle tool", "detail": str(e) if self.settings.debug else None},
+                        status_code=500,
+                    )
+
             else:
                 return JSONResponse(
-                    {"error": f"Invalid action: {action}. Use 'enable' or 'disable'"},
+                    {"error": f"Invalid action: {action}. Use 'enable', 'disable', or 'toggle_tool'"},
                     status_code=400,
                 )
 

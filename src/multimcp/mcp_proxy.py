@@ -225,6 +225,107 @@ class MCPProxyServer(server.Server):
             had_resources = caps and caps.resources if caps else False
             if had_resources:
                 await self._send_resources_list_changed()
+    async def toggle_tool(self, server_name: str, tool_name: str, enabled: bool) -> dict:
+        """Enable or disable a single tool at runtime without restarting the server.
+
+        Disabling: removes the tool from tool_to_server (invisible to new clients)
+                   and adds it to the server's tool_filters deny list so it stays
+                   disabled through reconnects.
+        Enabling:  reconstructs a ToolMapping from the YAML cache (schemas preserved)
+                   with client=None for lazy servers or the live client if connected,
+                   removes from deny list so reconnects keep it enabled.
+
+        In both cases _send_tools_list_changed() is called so active MCP clients
+        refresh their tool list. Sessions that already received a tool retain it
+        (MCP protocol: clients cache tool lists; toggling is a hint, not a revoke).
+
+        Returns a dict suitable for the /mcp_control JSON response.
+        """
+        key = self._make_key(server_name, tool_name)
+
+        async with self._register_lock:
+            if not enabled:
+                # ── DISABLE ──────────────────────────────────────────────
+                if key not in self.tool_to_server:
+                    return {"status": "noop", "reason": f"tool '{key}' not currently visible"}
+
+                self.tool_to_server.pop(key, None)
+
+                # Update tool_filters so reconnects keep this tool disabled
+                filters = self.client_manager.tool_filters.get(server_name)
+                if filters is None:
+                    filters = {"allow": ["*"], "deny": []}
+                    self.client_manager.tool_filters[server_name] = filters
+                deny = filters.setdefault("deny", [])
+                if tool_name not in deny:
+                    deny.append(tool_name)
+                # Remove from allow list if it was there explicitly
+                allow = filters.get("allow", ["*"])
+                if tool_name in allow:
+                    allow.remove(tool_name)
+
+            else:
+                # ── ENABLE ───────────────────────────────────────────────
+                if key in self.tool_to_server:
+                    return {"status": "noop", "reason": f"tool '{key}' already visible"}
+
+                # Remove from deny list so reconnects keep it enabled
+                filters = self.client_manager.tool_filters.get(server_name, {})
+                deny = filters.get("deny", [])
+                if tool_name in deny:
+                    deny.remove(tool_name)
+                # Ensure it's in the allow list if allow is explicit
+                allow = filters.get("allow", ["*"])
+                if "*" not in allow and tool_name not in allow:
+                    allow.append(tool_name)
+
+                # Reconstruct ToolMapping from YAML cache (schemas preserved since our fix)
+                # Falls back to a minimal Tool if not in cache.
+                cached_tool: Optional[types.Tool] = None
+                if self.client_manager:
+                    server_cfg = self.client_manager.server_configs.get(server_name)
+                    if server_cfg:
+                        # server_configs stores raw dicts; check YAML config separately
+                        pass  # handled below
+
+                # Try to find it in server_configs YAML tool data via MultiMCPConfig
+                # We reconstruct the minimal Tool; full schema comes from YAML via ToolEntry
+                from src.multimcp.yaml_config import MultiMCPConfig  # avoid circular at module level
+                tool_description = ""
+                tool_input_schema: dict = {"type": "object", "properties": {}}
+
+                # Look up in any existing ToolMapping (e.g. from a recently unregistered entry)
+                # or fall back to a stub — real schema arrives on next discovery
+                if hasattr(self, "_yaml_config_ref"):
+                    srv_cfg = getattr(self._yaml_config_ref, "servers", {}).get(server_name)
+                    if srv_cfg:
+                        entry = srv_cfg.tools.get(tool_name)
+                        if entry:
+                            tool_description = entry.description or ""
+                            tool_input_schema = entry.input_schema or tool_input_schema
+
+                cached_tool = types.Tool(
+                    name=key,
+                    description=tool_description,
+                    inputSchema=tool_input_schema,
+                )
+                client = self.client_manager.clients.get(server_name) if self.client_manager else None
+                self.tool_to_server[key] = ToolMapping(
+                    server_name=server_name,
+                    client=client,  # None → lazy-connect on first call
+                    tool=cached_tool,
+                )
+
+        await self._send_tools_list_changed()
+        visible = sum(1 for m in self.tool_to_server.values()
+                      if m.server_name == server_name and m.client is not None)
+        return {
+            "status": "ok",
+            "tool": key,
+            "enabled": enabled,
+            "visible_tools_for_server": visible,
+        }
+
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
