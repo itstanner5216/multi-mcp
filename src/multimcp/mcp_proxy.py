@@ -3,6 +3,8 @@ import asyncio
 from mcp import server, types
 from mcp.client.session import ClientSession
 from mcp.server.session import ServerSession
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 from src.utils.logger import get_logger
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.audit import AuditLogger
@@ -384,20 +386,13 @@ class MCPProxyServer(server.Server):
             try:
                 _, original_name = self._split_key(prompt_name)
                 result = await mapping.client.get_prompt(original_name, req.params.arguments)
-                return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to get prompt '{prompt_name}': {e}")
-        else:
-            self.logger.error(f"⚠️ Prompt '{prompt_name}' not found in any server.")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to get prompt '{prompt_name}': {e}"))
+            return types.ServerResult(result)
 
-        return types.ServerResult(
-            content=[
-                types.TextContent(
-                    type="text", text=f"Prompt '{prompt_name}' not found!"
-                )
-            ],
-            isError=True,
-        )
+        self.logger.error(f"⚠️ Prompt '{prompt_name}' not found in any server.")
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Prompt '{prompt_name}' not found"))
 
     async def _complete(self, req: types.CompleteRequest) -> types.ServerResult:
         """Execute a prompt completion on the relevant MCP server."""
@@ -414,21 +409,14 @@ class MCPProxyServer(server.Server):
                     _, original_name = self._split_key(ref.name)
                     ref = ref.model_copy(update={"name": original_name})
                 result = await mapping.client.complete(ref, req.params.argument)
-                return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to complete prompt '{prompt_name}': {e}")
-        else:
-            self.logger.error(f"⚠️ Prompt '{prompt_name}' not found for completion.")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to complete prompt '{prompt_name}': {e}"))
+            return types.ServerResult(result)
 
-        return types.ServerResult(
-            content=[
-                types.TextContent(
-                    type="text",
-                    text=f"Prompt '{prompt_name}' not found for completion!",
-                )
-            ],
-            isError=True,
-        )
+        ref_desc = prompt_name or str(getattr(req.params.ref, 'uri', 'unknown'))
+        self.logger.error(f"⚠️ Prompt '{ref_desc}' not found for completion.")
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Prompt '{ref_desc}' not found for completion"))
 
     ## Resources capabilities
     async def _list_resources(self, _: Any) -> types.ServerResult:
@@ -453,20 +441,13 @@ class MCPProxyServer(server.Server):
             try:
                 # Resource keys are raw URIs (not namespaced) — pass directly to backend
                 result = await mapping.client.read_resource(resource_uri)
-                return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to read resource '{resource_uri}': {e}")
-        else:
-            self.logger.error(f"⚠️ Resource '{resource_uri}' not found in any server.")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to read resource '{resource_uri}': {e}"))
+            return types.ServerResult(result)
 
-        return types.ServerResult(
-            content=[
-                types.TextContent(
-                    type="text", text=f"Resource '{resource_uri}' not found!"
-                )
-            ],
-            isError=True,
-        )
+        self.logger.error(f"⚠️ Resource '{resource_uri}' not found in any server.")
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Resource '{resource_uri}' not found"))
 
     async def _subscribe_resource(
         self, req: types.SubscribeRequest
@@ -482,17 +463,10 @@ class MCPProxyServer(server.Server):
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
                 self.logger.error(f"❌ Failed to subscribe to resource '{uri}': {e}")
-        else:
-            self.logger.error(f"⚠️ Resource '{uri}' not found for subscription.")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to subscribe to resource '{uri}': {e}"))
 
-        return types.ServerResult(
-            content=[
-                types.TextContent(
-                    type="text", text=f"Resource '{uri}' not found for subscription!"
-                )
-            ],
-            isError=True,
-        )
+        self.logger.error(f"⚠️ Resource '{uri}' not found for subscription.")
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Resource '{uri}' not found for subscription"))
 
     async def _unsubscribe_resource(
         self, req: types.UnsubscribeRequest
@@ -510,18 +484,10 @@ class MCPProxyServer(server.Server):
                 self.logger.error(
                     f"❌ Failed to unsubscribe from resource '{uri}': {e}"
                 )
-        else:
-            self.logger.error(f"⚠️ Resource '{uri}' not found for unsubscription.")
+                raise McpError(ErrorData(code=INTERNAL_ERROR, message=f"Failed to unsubscribe from resource '{uri}': {e}"))
 
-        return types.ServerResult(
-            content=[
-                types.TextContent(
-                    type="text",
-                    text=f"Resource '{uri}' not found for unsubscription!",
-                )
-            ],
-            isError=True,
-        )
+        self.logger.error(f"⚠️ Resource '{uri}' not found for unsubscription.")
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Resource '{uri}' not found for unsubscription"))
 
     def _register_request_handlers(self) -> None:
         """Dynamically registers handlers for all MCP requests."""

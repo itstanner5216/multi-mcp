@@ -7,6 +7,7 @@ calls _split_key() to recover the original name before forwarding to backends.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from mcp import types
+from mcp.shared.exceptions import McpError
 
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.mcp_proxy import MCPProxyServer, PromptMapping
@@ -41,8 +42,9 @@ class TestGetPrompt:
     @pytest.mark.asyncio
     async def test_get_prompt_strips_namespace(self):
         proxy, mock_client = _make_proxy_with_prompt()
-        mock_client.get_prompt = AsyncMock(return_value=MagicMock(
-            messages=[MagicMock()], description="summary"
+        mock_client.get_prompt = AsyncMock(return_value=types.GetPromptResult(
+            messages=[types.PromptMessage(role="user", content=types.TextContent(type="text", text="hello"))],
+            description="summary"
         ))
 
         req = MagicMock()
@@ -60,10 +62,10 @@ class TestGetPrompt:
     @pytest.mark.asyncio
     async def test_get_prompt_returns_server_result(self):
         proxy, mock_client = _make_proxy_with_prompt()
-        mock_response = MagicMock(
-            messages=[MagicMock()], description="result"
-        )
-        mock_client.get_prompt = AsyncMock(return_value=mock_response)
+        mock_client.get_prompt = AsyncMock(return_value=types.GetPromptResult(
+            messages=[types.PromptMessage(role="user", content=types.TextContent(type="text", text="result"))],
+            description="result"
+        ))
 
         req = MagicMock()
         req.params = MagicMock()
@@ -81,8 +83,8 @@ class TestGetPrompt:
         req.params.name = "nonexistent__foo"
         req.params.arguments = {}
 
-        result = await proxy._get_prompt(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
     @pytest.mark.asyncio
     async def test_get_prompt_disconnected_client_returns_error(self):
@@ -94,8 +96,8 @@ class TestGetPrompt:
         req.params.name = "weather__summarize"
         req.params.arguments = {}
 
-        result = await proxy._get_prompt(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
     @pytest.mark.asyncio
     async def test_get_prompt_backend_exception_returns_error(self):
@@ -107,14 +109,14 @@ class TestGetPrompt:
         req.params.name = "weather__summarize"
         req.params.arguments = {}
 
-        result = await proxy._get_prompt(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
     @pytest.mark.asyncio
     async def test_get_prompt_with_none_arguments(self):
         """get_prompt should handle None arguments gracefully."""
         proxy, mock_client = _make_proxy_with_prompt()
-        mock_client.get_prompt = AsyncMock(return_value=MagicMock(
+        mock_client.get_prompt = AsyncMock(return_value=types.GetPromptResult(
             messages=[], description="empty"
         ))
 
@@ -168,8 +170,8 @@ class TestComplete:
         req.params.ref = ref
         req.params.argument = MagicMock()
 
-        result = await proxy._complete(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._complete(req)
 
     @pytest.mark.asyncio
     async def test_complete_disconnected_client_returns_error(self):
@@ -185,8 +187,8 @@ class TestComplete:
         req.params.ref = ref
         req.params.argument = MagicMock()
 
-        result = await proxy._complete(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._complete(req)
 
     @pytest.mark.asyncio
     async def test_complete_backend_exception_returns_error(self):
@@ -203,8 +205,8 @@ class TestComplete:
         req.params.ref = ref
         req.params.argument = MagicMock()
 
-        result = await proxy._complete(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._complete(req)
 
     @pytest.mark.asyncio
     async def test_complete_ref_without_name_returns_error(self):
@@ -217,8 +219,8 @@ class TestComplete:
         req.params.ref = ref
         req.params.argument = MagicMock()
 
-        result = await proxy._complete(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._complete(req)
 
 
 class TestListPrompts:

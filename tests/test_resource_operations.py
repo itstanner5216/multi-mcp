@@ -8,6 +8,7 @@ backends without _split_key() — unlike tools/prompts which are namespaced.
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from mcp import types
+from mcp.shared.exceptions import McpError
 
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.mcp_proxy import MCPProxyServer, ResourceMapping
@@ -58,8 +59,8 @@ class TestSubscribeResource:
         req.params = MagicMock()
         req.params.uri = "resource://nonexistent/foo"
 
-        result = await proxy._subscribe_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._subscribe_resource(req)
 
     @pytest.mark.asyncio
     async def test_subscribe_disconnected_client_returns_error(self):
@@ -70,8 +71,8 @@ class TestSubscribeResource:
         req.params = MagicMock()
         req.params.uri = "resource://weather/data"
 
-        result = await proxy._subscribe_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._subscribe_resource(req)
 
 
 class TestUnsubscribeResource:
@@ -99,8 +100,8 @@ class TestUnsubscribeResource:
         req.params = MagicMock()
         req.params.uri = "resource://nonexistent/foo"
 
-        result = await proxy._unsubscribe_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._unsubscribe_resource(req)
 
 
 class TestReadResource:
@@ -109,8 +110,8 @@ class TestReadResource:
     @pytest.mark.asyncio
     async def test_read_forwards_raw_uri(self):
         proxy, mock_client = _make_proxy_with_resource()
-        mock_client.read_resource = AsyncMock(return_value=MagicMock(
-            contents=[MagicMock(uri="resource://weather/data", text="sunny")]
+        mock_client.read_resource = AsyncMock(return_value=types.ReadResourceResult(
+            contents=[types.TextResourceContents(uri="resource://weather/data", text="sunny", mimeType="text/plain")]
         ))
 
         req = MagicMock()
@@ -132,8 +133,8 @@ class TestReadResource:
         req.params = MagicMock()
         req.params.uri = "resource://weather/data"
 
-        result = await proxy._read_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._read_resource(req)
 
     @pytest.mark.asyncio
     async def test_read_unknown_resource_returns_error(self):
@@ -142,8 +143,8 @@ class TestReadResource:
         req.params = MagicMock()
         req.params.uri = "resource://nonexistent/foo"
 
-        result = await proxy._read_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._read_resource(req)
 
     @pytest.mark.asyncio
     async def test_read_client_exception_returns_error(self):
@@ -154,8 +155,8 @@ class TestReadResource:
         req.params = MagicMock()
         req.params.uri = "resource://weather/data"
 
-        result = await proxy._read_resource(req)
-        assert result.root.isError
+        with pytest.raises(McpError):
+            await proxy._read_resource(req)
 
 
 class TestListResources:

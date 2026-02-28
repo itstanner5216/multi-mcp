@@ -413,6 +413,7 @@ class MultiMCP:
             await asyncio.gather(*list(self._bg_tasks), return_exceptions=True)
             await self.client_manager.close()
             self.logger.info("✅ Graceful shutdown complete")
+
     def load_mcp_config(self, path=None):
         """Loads MCP JSON configuration From File."""
         if not path or not os.path.exists(path):

@@ -7,6 +7,7 @@ Covers: _list_prompts, _get_prompt, _list_resources, _read_resource,
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from mcp import types
+from mcp.shared.exceptions import McpError
 
 from src.multimcp.mcp_proxy import MCPProxyServer, PromptMapping, ResourceMapping
 
@@ -96,8 +97,8 @@ class TestGetPrompt:
         proxy = _make_proxy()
         req = MagicMock()
         req.params.name = "nonexistent__prompt"
-        result = await proxy._get_prompt(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
     @pytest.mark.asyncio
     async def test_backend_failure_returns_error(self):
@@ -111,8 +112,8 @@ class TestGetPrompt:
         req = MagicMock()
         req.params.name = "github__summarize"
         req.params.arguments = {}
-        result = await proxy._get_prompt(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
     @pytest.mark.asyncio
     async def test_prompt_with_none_client_returns_error(self):
@@ -124,8 +125,8 @@ class TestGetPrompt:
         req = MagicMock()
         req.params.name = "github__summarize"
         req.params.arguments = {}
-        result = await proxy._get_prompt(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._get_prompt(req)
 
 
 # ── Resource tests ────────────────────────────────────────────────────
@@ -176,7 +177,9 @@ class TestReadResource:
     async def test_routes_with_raw_uri(self):
         proxy = _make_proxy()
         client = AsyncMock()
-        read_result = MagicMock()
+        read_result = types.ReadResourceResult(
+            contents=[types.TextResourceContents(uri="file:///data.csv", text="data", mimeType="text/plain")]
+        )
         client.read_resource = AsyncMock(return_value=read_result)
         proxy.resource_to_server["file:///data.csv"] = ResourceMapping(
             server_name="fs", client=client,
@@ -193,8 +196,8 @@ class TestReadResource:
         proxy = _make_proxy()
         req = MagicMock()
         req.params.uri = "file:///nonexistent"
-        result = await proxy._read_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._read_resource(req)
 
     @pytest.mark.asyncio
     async def test_backend_failure_returns_error(self):
@@ -207,8 +210,8 @@ class TestReadResource:
         )
         req = MagicMock()
         req.params.uri = "file:///data.csv"
-        result = await proxy._read_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._read_resource(req)
 
 
 # ── Subscribe / Unsubscribe tests ────────────────────────────────────
@@ -236,8 +239,8 @@ class TestSubscribeResource:
         proxy = _make_proxy()
         req = MagicMock()
         req.params.uri = "file:///nonexistent"
-        result = await proxy._subscribe_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._subscribe_resource(req)
 
     @pytest.mark.asyncio
     async def test_backend_failure_returns_error(self):
@@ -252,8 +255,8 @@ class TestSubscribeResource:
         )
         req = MagicMock()
         req.params.uri = "file:///watch.log"
-        result = await proxy._subscribe_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._subscribe_resource(req)
 
 
 class TestUnsubscribeResource:
@@ -277,8 +280,8 @@ class TestUnsubscribeResource:
         proxy = _make_proxy()
         req = MagicMock()
         req.params.uri = "file:///nonexistent"
-        result = await proxy._unsubscribe_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._unsubscribe_resource(req)
 
     @pytest.mark.asyncio
     async def test_none_client_returns_error(self):
@@ -289,5 +292,5 @@ class TestUnsubscribeResource:
         )
         req = MagicMock()
         req.params.uri = "file:///watch.log"
-        result = await proxy._unsubscribe_resource(req)
-        assert result.root.isError is True
+        with pytest.raises(McpError):
+            await proxy._unsubscribe_resource(req)
