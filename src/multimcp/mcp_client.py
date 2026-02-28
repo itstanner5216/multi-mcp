@@ -154,6 +154,7 @@ class MCPClientManager:
         self._on_server_disconnected = on_server_disconnected
         self._creation_locks: Dict[str, asyncio.Lock] = {}
         self.on_server_reconnected: Optional[Any] = None  # async callable(server_name, client)
+        self._supervision_tasks: Dict[str, asyncio.Task] = {}
 
     def _get_creation_lock(self, name: str) -> asyncio.Lock:
         """Get or create a per-server creation lock (lazily initialized)."""
@@ -168,11 +169,10 @@ class MCPClientManager:
         self.last_used.pop(name, None)
         self._creation_locks.pop(name, None)
         self.clients.pop(name, None)
-        stack = self.server_stacks.pop(name, None)
-        if stack:
-            # Stack should already be closed by caller, but safety net
-            self.logger.debug(f"Removed server stack for '{name}'")
-
+        task = self._supervision_tasks.pop(name, None)
+        if task and not task.done():
+            task.cancel()
+        self.server_stacks.pop(name, None)
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
 
@@ -619,6 +619,10 @@ class MCPClientManager:
             self.server_stacks[name] = server_stack
             self.logger.info(f"✅ Connected to {name}")
 
+            # Start supervision task to detect disconnect and clean up gracefully
+            # Without this, a dying subprocess crashes the entire server
+            self._start_supervision(name)
+
         except Exception as e:
             self.logger.error(f"❌ Failed to create client for {name}: {e}")
             try:
@@ -627,6 +631,70 @@ class MCPClientManager:
                 pass
             raise
 
+
+    def _start_supervision(self, name: str, interval: float = 10.0) -> None:
+        """Start a background task that monitors a server's health.
+
+        When the server's subprocess dies or the ClientSession disconnects,
+        this task catches the failure, cleans up state, and lets the
+        always-on watchdog handle reconnection.
+
+        Args:
+            name: Server name to supervise.
+            interval: Seconds between health checks (lower in tests).
+        """
+        # Cancel any existing supervision task for this server
+        old_task = self._supervision_tasks.pop(name, None)
+        if old_task and not old_task.done():
+            old_task.cancel()
+
+        async def _supervise() -> None:
+            try:
+                while name in self.clients:
+                    await asyncio.sleep(interval)
+                    session = self.clients.get(name)
+                    if session is None:
+                        break
+                    try:
+                        # send_ping validates the session is alive
+                        await asyncio.wait_for(session.send_ping(), timeout=15)
+                    except asyncio.CancelledError:
+                        raise  # Propagate cancellation
+                    except Exception:
+                        self.logger.warning(
+                            f"🔌 Server '{name}' is unresponsive, cleaning up"
+                        )
+                        break
+            except asyncio.CancelledError:
+                return  # Normal shutdown
+            except Exception as exc:
+                self.logger.warning(
+                    f"🔌 Supervision for '{name}' caught error: {exc}"
+                )
+            finally:
+                # Only clean up if we detected a problem (not if cancelled)
+                if name in self.clients:
+                    self.logger.info(
+                        f"🔄 Cleaning up '{name}' for watchdog reconnect"
+                    )
+                    self.clients.pop(name, None)
+                    # NOTE: We deliberately do NOT call old_stack.aclose() here.
+                    # The stack's cancel scope was entered in a different asyncio task
+                    # (the one that called _create_single_client), and anyio forbids
+                    # exiting cancel scopes from a different task. The subprocess is
+                    # already dead, so resources are effectively released. The
+                    # watchdog will create a fresh stack on reconnect.
+                    self.server_stacks.pop(name, None)
+                    # Notify proxy about disconnection
+                    if self._on_server_disconnected:
+                        try:
+                            await self._on_server_disconnected(name)
+                        except Exception:
+                            pass
+
+        self._supervision_tasks[name] = asyncio.create_task(
+            _supervise(), name=f"supervise-{name}"
+        )
     async def create_clients(
         self, config: dict, lazy: bool = False
     ) -> Dict[str, ClientSession]:
@@ -671,6 +739,18 @@ class MCPClientManager:
         """
         Closes all clients and releases resources managed by the async context stack.
         """
+        # Cancel supervision tasks first so they don't interfere with cleanup
+        for name, task in list(self._supervision_tasks.items()):
+            if not task.done():
+                task.cancel()
+        # Wait briefly for cancellation to propagate
+        for name, task in list(self._supervision_tasks.items()):
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
+        self._supervision_tasks.clear()
+
         for name, server_stack in list(self.server_stacks.items()):
             try:
                 await server_stack.aclose()
