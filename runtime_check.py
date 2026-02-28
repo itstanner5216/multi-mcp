@@ -879,6 +879,94 @@ if __name__ == "__main__":
     )
 
     # ------------------------------------------------------------------ #
+    # PHASE 14: GitHub MCP tools through the proxy (Docker backend)
+    # ------------------------------------------------------------------ #
+    header("PHASE 14: GitHub MCP tools (Docker → stdio → proxy → tool call)")
+
+    gh_srv = real_cfg.servers.get("github")
+    if not gh_srv or not gh_srv.command:
+        print("  ⚠️  SKIP: github not in YAML or has no command")
+    else:
+        try:
+            async with AsyncExitStack() as stack:
+                params = StdioServerParameters(command=gh_srv.command, args=gh_srv.args or [])
+                cr, cw = await stack.enter_async_context(stdio_client(params))
+                sess = await stack.enter_async_context(ClientSession(cr, cw))
+                await asyncio.wait_for(sess.initialize(), timeout=30)
+
+                tools = (await sess.list_tools()).tools
+                check("github: server connects via Docker",   True)
+                check("github: 38 tools available",          len(tools) == 38, f"got {len(tools)}")
+
+                # Wire through proxy
+                mgr_gh = MCPClientManager()
+                mgr_gh.clients["github"] = sess
+                mgr_gh.tool_filters["github"] = None
+                proxy_gh = MCPProxyServer(mgr_gh)
+                await proxy_gh.initialize_single_client("github", sess)
+
+                gh_keys = [k for k in proxy_gh.tool_to_server if k.startswith("github__")]
+                check("proxy exposes github__ tools",        len(gh_keys) > 0, str(len(gh_keys)))
+                check("no colon in any github tool name",    all(":" not in k for k in gh_keys),
+                      str([k for k in gh_keys if ":" in k]))
+
+                # get_me — returns authenticated user (read-only, no params)
+                req_me = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(name="github__get_me", arguments={}),
+                )
+                r_me = await asyncio.wait_for(proxy_gh._call_tool(req_me), timeout=15)
+                out_me = ""
+                try: out_me = r_me.root.content[0].text
+                except Exception: pass
+                check("github__get_me no error",             not r_me.root.isError, out_me[:80])
+                check("github__get_me returns login field",  '"login"' in out_me, out_me[:120])
+
+                # search_repositories — search public repos
+                req_sr = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="github__search_repositories",
+                        arguments={"query": "multi-mcp", "perPage": 3},
+                    ),
+                )
+                r_sr = await asyncio.wait_for(proxy_gh._call_tool(req_sr), timeout=15)
+                out_sr = ""
+                try: out_sr = r_sr.root.content[0].text
+                except Exception: pass
+                check("github__search_repositories no error", not r_sr.root.isError, out_sr[:80])
+                check("github__search_repositories returns results",
+                      "total_count" in out_sr or "items" in out_sr, out_sr[:120])
+
+                # list_branches on this very repo
+                req_lb = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name="github__list_branches",
+                        arguments={"owner": "itstanner5216", "repo": "multi-mcp"},
+                    ),
+                )
+                r_lb = await asyncio.wait_for(proxy_gh._call_tool(req_lb), timeout=15)
+                out_lb = ""
+                try: out_lb = r_lb.root.content[0].text
+                except Exception: pass
+                check("github__list_branches no error",      not r_lb.root.isError, out_lb[:80])
+                check("github__list_branches finds branches", "stabilize" in out_lb or "main" in out_lb,
+                      out_lb[:200])
+
+        except asyncio.TimeoutError:
+            print("  ⚠️  SKIP: GitHub Docker container timed out")
+        except Exception as e:
+            import anyio
+            if isinstance(e, ExceptionGroup):
+                real_excs = [ex for ex in e.exceptions
+                             if not isinstance(ex, anyio.ClosedResourceError)]
+                if real_excs:
+                    check("github: connects without error", False, str(real_excs[0]))
+            else:
+                check("github: connects without error", False, str(e))
+
+    # ------------------------------------------------------------------ #
     # Summary
     # ------------------------------------------------------------------ #
     print(f"\n{'='*65}")
