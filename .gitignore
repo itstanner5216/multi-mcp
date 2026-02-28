@@ -42,3 +42,4 @@ TASK_*.md
 contextforplan/
 docs/plans/
 .worktrees/
+.claude/worktrees/

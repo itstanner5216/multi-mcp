@@ -13,11 +13,11 @@ Multi-MCP is a Python-based proxy server that acts as a single MCP (Model Contex
 - **MultiMCP (`src/multimcp/multi_mcp.py`)**: Main server orchestrator that handles configuration, transport modes, and HTTP endpoints
 - **MCPProxyServer (`src/multimcp/mcp_proxy.py`)**: Core proxy that forwards MCP requests to backend servers, handles tool namespacing (`server_name_tool_name`), and manages capabilities aggregation
 - **MCPClientManager (`src/multimcp/mcp_client.py`)**: Manages lifecycle of multiple MCP client connections (both stdio and SSE)
-- **Logger (`src/utils/logger.py`)**: Centralized logging using Rich handlers with `multi_mcp.*` namespace
+- **Logger (`src/utils/logger.py`)**: Centralized logging using loguru with `multi_mcp.*` namespace
 
 ### Key Patterns
 
-- **Tool Namespacing**: Tools are namespaced as `server_name_tool_name` to avoid conflicts when multiple servers expose tools with the same name
+- **Tool Namespacing**: Tools are namespaced as `server_name__tool_name` (double underscore separator) to avoid conflicts when multiple servers expose tools with the same name
 - **Transport Flexibility**: Supports both STDIO (for CLI/pipe-based) and SSE (for HTTP/network-based) communication
 - **Dynamic Server Management**: Can add/remove MCP servers at runtime via HTTP API (SSE mode only)
 - **Capability Aggregation**: Proxies and combines tools, prompts, and resources from all connected backend servers
@@ -130,14 +130,14 @@ Configuration is JSON-based, defining backend MCP servers to connect to:
 
 ### Tool Namespacing Implementation
 Tools are internally namespaced using `_make_key()` and `_split_key()` static methods in `MCPProxyServer`:
-- `_make_key(server_name, tool_name)` creates `server_name_tool_name` identifiers
-- `_split_key(key)` splits namespaced keys back into `(server, tool)` tuples using first underscore
+- `_make_key(server_name, tool_name)` creates `server_name__tool_name` identifiers (double underscore `__` separator)
+- `_split_key(key)` splits namespaced keys back into `(server, tool)` tuples using the `__` separator
 - Namespaced tools are stored in `tool_to_server` dict mapping keys to `ToolMapping` objects
 - This allows multiple servers to expose tools with identical base names without conflicts
 
 ### Capability Management
 - Server capabilities are checked during initialization and stored in `self.capabilities[name]`
-- `_list_prompts()` and `_list_resources()` only call servers that support those capabilities
+- `_list_prompts()` and `_list_resources()` serve from cache populated during server registration
 - Prevents "Method not found" errors when servers don't implement all MCP methods
 - Graceful handling of servers with different capability sets (tools-only vs full MCP servers)
 

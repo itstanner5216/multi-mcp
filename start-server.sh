@@ -103,7 +103,7 @@ echo "Starting multi-mcp proxy server..."
 echo "================================"
 echo ""
 
-exec python main.py \
+exec python main.py start \
     --transport sse \
     --host "$HOST" \
     --port "$PORT" \

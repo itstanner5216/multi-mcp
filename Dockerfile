@@ -23,4 +23,4 @@ COPY ./msc/mcp.json /app/mcp.json
 
 # Start app
 
-CMD ["python", "main.py", "--transport", "sse", "--config", "mcp.json", "--host", "0.0.0.0"]
+CMD ["python", "main.py", "start", "--transport", "sse", "--config", "mcp.json", "--host", "0.0.0.0"]

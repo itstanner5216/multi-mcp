@@ -1,15 +1,15 @@
-.PHONY: docker-build run docker-run test-proxy test-e2e test-k8s test-k all-test
+.PHONY: docker-build run docker-run test-proxy test-e2e test-k8s test-lifecycle all-test
 
 # Docker
 docker-build:
 	docker build -t multi-mcp .
 
 docker-run:
-	docker run -p 8080:8080 multi-mcp
+	docker run -p 8085:8085 multi-mcp
 
 # Run
 run:
-	uv run main.py
+	uv run main.py start
 
 # Tests
 test-proxy:
@@ -25,4 +25,4 @@ test-lifecycle:
 	pytest -s tests/lifecycle_test.py
 
 # All tests together
-all-test: test-proxy test-e2e test-k test-k8s
+all-test: test-proxy test-e2e test-lifecycle test-k8s

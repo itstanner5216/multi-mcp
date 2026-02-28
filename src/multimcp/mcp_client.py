@@ -140,10 +140,51 @@ class MCPClientManager:
     async def _discover_sse(self, name: str, url: str, server_config: "ServerConfig") -> list:
         """Discover tools from an HTTP/SSE server (anyio-compatible direct async-with).
 
-        Tries Streamable HTTP (POST) first — the current MCP spec default.
-        Falls back to legacy SSE (GET) if the server returns 405.
+        Respects server_config.type:
+        - 'streamablehttp': connect directly via Streamable HTTP (POST)
+        - 'sse': connect directly via legacy SSE (GET)
+        - 'stdio' or other: auto-detect (try Streamable HTTP first, fall back to SSE)
         """
-        # Try Streamable HTTP (POST) first — newer spec, used by Exa and others
+        transport_type = getattr(server_config, 'type', 'stdio')
+
+        # Direct Streamable HTTP (skip SSE fallback)
+        if transport_type == "streamablehttp":
+            try:
+                async with streamable_http_client(url) as (read, write, _):
+                    async with ClientSession(read, write) as client:
+                        init_result = await client.initialize()
+                        tools = []
+                        if init_result.capabilities.tools:
+                            tools_result = await client.list_tools()
+                            tools = tools_result.tools
+                        self.logger.info(
+                            f"🔌 Discovered {len(tools)} tools from '{name}' (streamable-http)"
+                        )
+                        return tools
+            except Exception as e:
+                self.logger.error(f"❌ Streamable HTTP failed for '{name}': {e}")
+                return []
+
+        # Direct legacy SSE (skip Streamable HTTP probe)
+        if transport_type in ("sse", "http"):
+            try:
+                async with sse_client(url=url) as (read, write):
+                    async with ClientSession(read, write) as client:
+                        init_result = await client.initialize()
+                        tools = []
+                        if init_result.capabilities.tools:
+                            tools_result = await client.list_tools()
+                            tools = tools_result.tools
+                        self.logger.info(
+                            f"🔌 Discovered {len(tools)} tools from '{name}' (SSE)"
+                        )
+                        return tools
+            except Exception as e:
+                self.logger.error(f"❌ SSE discovery failed for '{name}': {e}")
+                return []
+
+        # Auto-detect: Try Streamable HTTP (POST) first — the current MCP spec default.
+        # Falls back to legacy SSE (GET) if the server returns 405.
         try:
             async with streamable_http_client(url) as (read, write, _):
                 async with ClientSession(read, write) as client:
@@ -378,6 +419,11 @@ class MCPClientManager:
             return {}
 
         # Eager mode: connect immediately (existing behavior)
+        # NOTE(M4): The stack is shared across all server connections.
+        # This means if ANY server fails during cleanup, it can affect other servers.
+        # A future improvement would be per-server AsyncExitStack instances for
+        # full isolation, but the shared stack works for now since server failures
+        # are caught individually during creation below.
         await self.stack.__aenter__()  # manually enter the stack once
 
         for name, server in config.get("mcpServers", {}).items():

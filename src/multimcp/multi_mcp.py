@@ -1,10 +1,13 @@
 import asyncio
+import hmac
 import os
+import signal
 import uvicorn
 import json
 from pathlib import Path
 from typing import Literal, Any, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import BaseModel, Field, ValidationError
 
 from mcp.server.stdio import stdio_server
 from starlette.applications import Starlette
@@ -166,7 +169,13 @@ class MultiMCP:
         return normalized
 
     def _scan_claude_plugins(self) -> dict[str, dict]:
-        """Scan Claude Code plugin cache for active MCP server configs."""
+        """Scan Claude Code plugin cache for active MCP server configs.
+        
+        NOTE: This method is Claude Code-specific. It reads from ~/.claude/plugins/cache
+        and ~/.claude/settings.local.json, which only exist when running inside
+        Claude Code (Anthropic's coding assistant). This behavior is controlled by the
+        'scan_claude_plugins' config flag and is safe to ignore in other environments.
+        """
         plugins_dir = Path.home() / ".claude" / "plugins" / "cache"
         settings_path = Path.home() / ".claude" / "settings.local.json"
         if not plugins_dir.exists():
@@ -296,9 +305,25 @@ class MultiMCP:
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
 
         # Register ALL servers as pending — proxy starts instantly from YAML cache
+        # NOTE(M10): model_dump(exclude_none=True) strips fields set to None.
+        # This is intentional for server configs — None fields like 'url' for stdio
+        # servers should not be passed to the client manager. If a field is explicitly
+        # set to None and needs to be preserved, use exclude_unset=True instead.
         for server_name, server_config in yaml_config.servers.items():
             server_dict = server_config.model_dump(exclude_none=True)
             self.client_manager.add_pending_server(server_name, server_dict)
+
+        # Register signal handlers for graceful shutdown
+        loop = asyncio.get_running_loop()
+        shutdown_event = asyncio.Event()
+
+        def _signal_handler(sig: int) -> None:
+            sig_name = signal.Signals(sig).name
+            self.logger.info(f"🛑 Received {sig_name}, initiating graceful shutdown...")
+            shutdown_event.set()
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, _signal_handler, sig)
 
         # Start idle checker background task
         self._track_task(self.client_manager.start_idle_checker(), "idle-checker")
@@ -335,13 +360,22 @@ class MultiMCP:
             # Connect always_on servers in background (don't block startup)
             self._track_task(_connect_always_on(), "connect-always-on")
 
-            await self.start_server()
+            # Wait for server or shutdown signal
+            server_task = asyncio.create_task(self.start_server())
+            shutdown_task = asyncio.create_task(shutdown_event.wait())
+            done, pending = await asyncio.wait(
+                {server_task, shutdown_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # If shutdown signal received, cancel remaining tasks
+            for task in pending:
+                task.cancel()
         finally:
             for task in list(self._bg_tasks):
                 task.cancel()
             await asyncio.gather(*list(self._bg_tasks), return_exceptions=True)
             await self.client_manager.close()
-
+            self.logger.info("✅ Graceful shutdown complete")
     def load_mcp_config(self, path=None):
         """Loads MCP JSON configuration From File."""
         if not path or not os.path.exists(path):
@@ -359,42 +393,45 @@ class MultiMCP:
     def _check_auth(self, request: Request) -> Optional[JSONResponse]:
         """
         Check if request is authenticated.
-
+        
+        Accepts Authorization: Bearer <token> header (preferred) or
+        ?token=<key> query parameter (deprecated fallback for SSE).
         Returns None if authenticated, JSONResponse with 401 if not.
         """
         if not self.auth_enabled:
             return None  # Auth disabled, allow request
 
-        # For SSE endpoint, check query parameter
+        # Try Authorization header first (preferred for all endpoints)
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    {
+                        "error": "Unauthorized: Invalid Authorization format (expected 'Bearer <token>')"
+                    },
+                    status_code=401,
+                )
+            token = auth_header[7:]  # Remove "Bearer " prefix
+            if hmac.compare_digest(token, self.settings.api_key):
+                return None  # Valid token
+            return JSONResponse({"error": "Unauthorized: Invalid API key"}, status_code=401)
+
+        # Deprecated fallback: query parameter for SSE endpoint
         if request.url.path == "/sse":
             token = request.query_params.get("token")
-            if token == self.settings.api_key:
-                return None  # Valid token
+            if token and hmac.compare_digest(token, self.settings.api_key):
+                self.logger.warning(
+                    "⚠️ SSE auth via query parameter is deprecated. Use 'Authorization: Bearer <token>' header instead."
+                )
+                return None  # Valid token (deprecated path)
             return JSONResponse(
                 {"error": "Unauthorized: Invalid or missing token"}, status_code=401
             )
 
-        # For HTTP endpoints, check Authorization header
-        auth_header = request.headers.get("Authorization")
-        if not auth_header:
-            return JSONResponse(
-                {"error": "Unauthorized: Missing Authorization header"}, status_code=401
-            )
-
-        # Check Bearer token format
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(
-                {
-                    "error": "Unauthorized: Invalid Authorization format (expected 'Bearer <token>')"
-                },
-                status_code=401,
-            )
-
-        token = auth_header[7:]  # Remove "Bearer " prefix
-        if token == self.settings.api_key:
-            return None  # Valid token
-
-        return JSONResponse({"error": "Unauthorized: Invalid API key"}, status_code=401)
+        # Non-SSE endpoints require Authorization header
+        return JSONResponse(
+            {"error": "Unauthorized: Missing Authorization header"}, status_code=401
+        )
 
     async def _auth_wrapper(self, handler, request: Request):
         """Wrapper to apply authentication check to endpoint handlers."""
@@ -501,27 +538,39 @@ class MultiMCP:
         elif method == "POST":
             try:
                 payload = await request.json()
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {"error": "Invalid JSON in request body"}, status_code=400
+                )
+            if "mcpServers" not in payload:
+                return JSONResponse(
+                    {"error": "Missing required 'mcpServers' field"}, status_code=422
+                )
+            # Add servers as pending (lazy connection on first tool call)
+            servers = payload.get("mcpServers", {})
+            added = []
+            for name, config in servers.items():
+                self.proxy.client_manager.add_pending_server(name, config)
+                added.append(name)
 
-                if "mcpServers" not in payload:
-                    return JSONResponse(
-                        {"error": "Missing 'mcpServers' in payload"}, status_code=400
-                    )
+            if not added:
+                return JSONResponse(
+                    {"error": "No servers found in payload"}, status_code=400
+                )
 
-                # Create clients from full `mcpServers` dict
-                new_clients = await self.proxy.client_manager.create_clients(payload)
-
-                if not new_clients:
-                    return JSONResponse(
-                        {"error": "No clients were created"}, status_code=500
-                    )
-
+            # Try to eagerly connect new servers for immediate availability
+            try:
+                new_clients = await self.proxy.client_manager.create_clients(
+                    {"mcpServers": {n: servers[n] for n in added}}
+                )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
+            except Exception as connect_err:
+                self.logger.warning(
+                    f"⚠️ Eager connect failed for {added}, will connect on first use: {connect_err}"
+                )
 
-                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
-
-            except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+            return JSONResponse({"message": f"Added {added}"})
 
         elif method == "DELETE":
             name = request.path_params.get("name")
@@ -594,8 +643,12 @@ class MultiMCP:
     async def handle_mcp_control(self, request: Request) -> JSONResponse:
         """Handle POST /mcp_control for manual server enable/disable."""
         try:
-            payload = await request.json()
-
+            try:
+                payload = await request.json()
+            except json.JSONDecodeError:
+                return JSONResponse(
+                    {"error": "Invalid JSON in request body"}, status_code=400
+                )
             action = payload.get("action")
             server_name = payload.get("server")
 
