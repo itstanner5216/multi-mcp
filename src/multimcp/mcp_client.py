@@ -19,7 +19,24 @@ from src.utils.logger import get_logger
 DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker"}
 
 # Env vars that cannot be overridden by server config
-PROTECTED_ENV_VARS = {"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "HOME", "USER", "PYTHONPATH", "PYTHONHOME"}
+PROTECTED_ENV_VARS = {
+    # Linux loader injection
+    "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+    # macOS loader injection
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    # Python injection
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+    # Node.js injection (--require executes arbitrary code)
+    "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS",
+    # Shell startup execution
+    "BASH_ENV", "ENV", "ZDOTDIR",
+    # Traffic interception
+    "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy",
+    # Identity / system
+    "HOME", "USER",
+    # Other runtime injection
+    "PERL5LIB", "PERL5OPT", "RUBYLIB", "RUBYOPT",
+}
 
 # Private/internal IP ranges to block for SSRF
 _PRIVATE_RANGES = [
