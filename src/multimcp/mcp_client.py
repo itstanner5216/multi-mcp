@@ -516,6 +516,14 @@ class MCPClientManager:
             name (str): Server name
             server (dict): Server configuration
         """
+        # Close any existing stack for this server to prevent leaks on reconnection
+        existing_stack = self.server_stacks.get(name)
+        if existing_stack:
+            try:
+                await existing_stack.aclose()
+            except Exception as e:
+                self.logger.warning(f"⚠️ Error closing old stack for '{name}': {e}")
+
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
 
