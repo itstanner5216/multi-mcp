@@ -2,7 +2,7 @@
 MCP Trigger Manager for keyword-based automatic server activation.
 """
 
-from typing import List, Dict
+from typing import List
 from src.multimcp.mcp_client import MCPClientManager
 from src.multimcp.utils.keyword_matcher import (
     extract_keywords_from_message,
@@ -58,7 +58,7 @@ class MCPTriggerManager:
                     await self.client_manager.get_or_create_client(server_name)
                     enabled_servers.append(server_name)
                     self.logger.info(f"✅ Server '{server_name}' enabled successfully")
-                except Exception as e:
+                except (ConnectionError, TimeoutError, OSError, ValueError, RuntimeError) as e:
                     self.logger.error(
                         f"❌ Failed to enable server '{server_name}': {e}"
                     )

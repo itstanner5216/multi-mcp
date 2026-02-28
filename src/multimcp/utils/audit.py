@@ -8,10 +8,38 @@ from typing import Any, Dict, Optional
 from pathlib import Path
 from datetime import datetime, timezone
 import json
+import re
 
 from loguru import logger
 
 from .config import AuditConfig, DEFAULT_AUDIT_CONFIG
+
+_SENSITIVE_KEYS = re.compile(
+    r"(api[_-]?key|token|password|passwd|secret|credential|auth|bearer)",
+    re.IGNORECASE,
+)
+_REDACTED = "***REDACTED***"
+
+
+def _sanitize_arguments(args):
+    """Recursively redact sensitive values from arguments dict."""
+    if args is None:
+        return None
+    if not isinstance(args, dict):
+        if isinstance(args, list):
+            return [_sanitize_arguments(item) for item in args]
+        return args
+    sanitized = {}
+    for key, value in args.items():
+        if _SENSITIVE_KEYS.search(key):
+            sanitized[key] = _REDACTED
+        elif isinstance(value, dict):
+            sanitized[key] = _sanitize_arguments(value)
+        elif isinstance(value, list):
+            sanitized[key] = [_sanitize_arguments(item) for item in value]
+        else:
+            sanitized[key] = value
+    return sanitized
 
 
 class AuditLogger:
@@ -89,7 +117,7 @@ class AuditLogger:
             "event_type": "tool_call",
             "tool_name": tool_name,
             "server_name": server_name,
-            "arguments": arguments,
+            "arguments": _sanitize_arguments(arguments),
             "status": "success",
         }
 
@@ -116,7 +144,7 @@ class AuditLogger:
             "event_type": "tool_call",
             "tool_name": tool_name,
             "server_name": server_name,
-            "arguments": arguments,
+            "arguments": _sanitize_arguments(arguments),
             "status": "error",
             "error": error,
         }
@@ -126,7 +154,7 @@ class AuditLogger:
 
     def _write_entry(self, entry: Dict[str, Any]) -> None:
         """Write a JSONL entry to the audit log."""
-        json_line = json.dumps(entry, separators=(",", ":"))
+        json_line = json.dumps(entry, separators=(",", ":"), default=str)
         logger.bind(audit=True).info(json_line)
 
     def close(self) -> None:
