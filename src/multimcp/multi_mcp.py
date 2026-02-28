@@ -116,8 +116,13 @@ class MultiMCP:
         plugin_servers = self._scan_claude_plugins()
         if plugin_servers:
             self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
-            # Don't overwrite JSON-defined servers with plugin versions
             for name, srv in plugin_servers.items():
+                if name not in json_servers:
+                    json_servers[name] = srv
+
+        desktop_servers = self._scan_claude_desktop_configs()
+        if desktop_servers:
+            for name, srv in desktop_servers.items():
                 if name not in json_servers:
                     json_servers[name] = srv
 
@@ -175,6 +180,92 @@ class MultiMCP:
                     continue  # Skip entries with empty command list
             normalized[name] = srv
         return normalized
+
+    def _scan_claude_desktop_configs(self) -> dict[str, dict]:
+        """Scan MCP server configs from all common editors and AI tools.
+
+        Covers: Claude Desktop, VSCode, VSCode Insiders, Cursor, Windsurf,
+                Zed (context_servers), Copilot CLI, OpenCode, Gemini CLI,
+                and any tool that writes a standard MCP config file.
+
+        _extract_mcp_servers already handles all key formats:
+          mcpServers  — Claude Desktop, Copilot CLI, OpenCode
+          servers     — VSCode, Cursor, Windsurf
+          mcp         — Gemini, OpenCode alternate
+
+        Skips the 'multi-mcp' entry to avoid connecting to ourselves.
+        """
+        home = Path.home()
+        app_support = home / "Library" / "Application Support"  # macOS
+        appdata = Path(os.environ["APPDATA"]) if os.environ.get("APPDATA") else None
+
+        # Each tuple is (label, path)
+        candidates: list[tuple[str, Path]] = [
+            # Claude Desktop
+            ("Claude Desktop", home / ".config" / "Claude" / "claude_desktop_config.json"),
+            ("Claude Desktop", app_support / "Claude" / "claude_desktop_config.json"),
+            # VSCode / VSCode Insiders (dedicated MCP file, uses "servers" key)
+            ("VSCode", home / ".config" / "Code" / "User" / "mcp.json"),
+            ("VSCode Insiders", home / ".config" / "Code - Insiders" / "User" / "mcp.json"),
+            ("VSCode", app_support / "Code" / "User" / "mcp.json"),
+            # Cursor
+            ("Cursor", home / ".cursor" / "mcp.json"),
+            ("Cursor", app_support / "Cursor" / "User" / "mcp.json"),
+            # Windsurf (Codeium)
+            ("Windsurf", home / ".codeium" / "windsurf" / "mcp_server_config.json"),
+            # Zed (uses "context_servers" key — handled below via custom extraction)
+            ("Zed", home / ".config" / "zed" / "settings.json"),
+            # OpenCode
+            ("OpenCode", home / ".config" / "opencode" / "config.json"),
+            ("OpenCode", home / ".opencode" / "config.json"),
+        ]
+        if appdata:
+            candidates += [
+                ("Claude Desktop", appdata / "Claude" / "claude_desktop_config.json"),
+                ("VSCode", appdata / "Code" / "User" / "mcp.json"),
+                ("Cursor", appdata / "Cursor" / "User" / "mcp.json"),
+            ]
+
+        # Build resolved exclusion set from callers that pass config
+        servers: dict[str, dict] = {}
+        for label, cfg_path in candidates:
+            if not cfg_path.exists():
+                continue
+            try:
+                with open(cfg_path) as f:
+                    data = json.load(f)
+
+                # Zed uses "context_servers" with a slightly different shape
+                if "context_servers" in data:
+                    raw = data["context_servers"]
+                    if isinstance(raw, dict):
+                        data = {"servers": raw}
+
+                extracted = self._extract_mcp_servers(data)
+                extracted.pop("multi-mcp", None)  # don't connect to ourselves
+                if extracted:
+                    self.logger.info(
+                        f"🖥️ Found {len(extracted)} server(s) in {label} config: {cfg_path}"
+                    )
+                    for name, srv in extracted.items():
+                        if name not in servers:
+                            servers[name] = srv
+            except (json.JSONDecodeError, OSError) as e:
+                self.logger.warning(f"⚠️ Failed to read {label} config {cfg_path}: {e}")
+        return servers
+
+    def _apply_source_exclusions(
+        self, servers: dict[str, dict], config: "MultiMCPConfig"
+    ) -> dict[str, dict]:
+        """Remove servers that the user has excluded via exclude_servers in YAML."""
+        excluded = set(getattr(config, "exclude_servers", []))
+        if not excluded:
+            return servers
+        filtered = {k: v for k, v in servers.items() if k not in excluded}
+        skipped = excluded & servers.keys()
+        if skipped:
+            self.logger.info(f"⛔ Skipping excluded servers: {', '.join(sorted(skipped))}")
+        return filtered
 
     def _scan_claude_plugins(self) -> dict[str, dict]:
         """Scan Claude Code plugin cache for active MCP server configs.
@@ -269,7 +360,7 @@ class MultiMCP:
                         except (json.JSONDecodeError, OSError) as e:
                             self.logger.warning(f"⚠️ Failed to read source {filepath}: {e}")
 
-            # Always scan Claude plugin cache
+            # Always scan Claude Code plugin cache
             plugin_servers = self._scan_claude_plugins()
             if plugin_servers:
                 self.logger.info(f"🔌 Found {len(plugin_servers)} server(s) from Claude plugins")
@@ -277,8 +368,18 @@ class MultiMCP:
                     if name not in all_json_servers:
                         all_json_servers[name] = srv
 
+            # Always scan Claude Desktop config (picks up desktop-commander etc.)
+            desktop_servers = self._scan_claude_desktop_configs()
+            if desktop_servers:
+                for name, srv in desktop_servers.items():
+                    if name not in all_json_servers:
+                        all_json_servers[name] = srv
+
+        excluded = set(getattr(config, "exclude_servers", []))
         new_servers = {}
         for name, srv in all_json_servers.items():
+            if name in excluded:
+                continue
             if name not in config.servers:
                 valid_fields = ServerConfig.model_fields.keys()
                 filtered = {k: v for k, v in srv.items() if k in valid_fields}
@@ -313,6 +414,7 @@ class MultiMCP:
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+        self._yaml_config_cache = yaml_config  # available to toggle_tool for schema lookup
 
         # Register ALL servers as pending — proxy starts instantly from YAML cache
         # NOTE(M10): model_dump(exclude_none=True) strips fields set to None.
@@ -790,9 +892,62 @@ class MultiMCP:
                         status_code=500,
                     )
 
+            elif action == "toggle_tool":
+                tool_name = payload.get("tool")
+                enabled = payload.get("enabled")
+
+                if not tool_name:
+                    return JSONResponse(
+                        {"error": "Missing 'tool' in payload"}, status_code=400
+                    )
+                if enabled is None or not isinstance(enabled, bool):
+                    return JSONResponse(
+                        {"error": "'enabled' must be a boolean (true/false)"}, status_code=400
+                    )
+                if not server_name:
+                    return JSONResponse(
+                        {"error": "Missing 'server' in payload"}, status_code=400
+                    )
+
+                # Verify server is known (active or pending)
+                known = (
+                    server_name in self.proxy.client_manager.clients
+                    or server_name in self.proxy.client_manager.pending_configs
+                )
+                if not known:
+                    return JSONResponse(
+                        {"error": f"Unknown server '{server_name}'"}, status_code=404
+                    )
+
+                try:
+                    # Give proxy a reference to the YAML config for schema reconstruction
+                    self.proxy._yaml_config_ref = getattr(self, "_yaml_config_cache", None)
+                    result = await self.proxy.toggle_tool(server_name, tool_name, enabled)
+
+                    # Persist to YAML (best-effort — runtime state already updated)
+                    try:
+                        from src.multimcp.yaml_config import load_config, save_config
+                        cfg = load_config(YAML_CONFIG_PATH)
+                        srv = cfg.servers.get(server_name)
+                        if srv and tool_name in srv.tools:
+                            srv.tools[tool_name].enabled = enabled
+                            save_config(cfg, YAML_CONFIG_PATH)
+                    except Exception as yaml_err:
+                        self.logger.warning(
+                            f"⚠️ Could not persist tool toggle to YAML: {yaml_err}"
+                        )
+
+                    return JSONResponse(result)
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to toggle tool '{tool_name}': {e}")
+                    return JSONResponse(
+                        {"error": "Failed to toggle tool", "detail": str(e) if self.settings.debug else None},
+                        status_code=500,
+                    )
+
             else:
                 return JSONResponse(
-                    {"error": f"Invalid action: {action}. Use 'enable' or 'disable'"},
+                    {"error": f"Invalid action: {action}. Use 'enable', 'disable', or 'toggle_tool'"},
                     status_code=400,
                 )
 

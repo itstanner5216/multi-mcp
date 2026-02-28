@@ -59,6 +59,11 @@ class MCPProxyServer(server.Server):
         self.trigger_manager = MCPTriggerManager(client_manager)
         # Optional retrieval pipeline (None = passthrough, all tools returned)
         self.retrieval_pipeline: Optional["RetrievalPipeline"] = None
+        # Circuit breaker: consecutive transport-failure counts per tool key
+        # (counts exceptions from call_tool, NOT isError=True tool responses)
+        self._tool_failure_counts: dict[str, int] = {}
+        # After this many consecutive transport failures, auto-quarantine the tool
+        self.quarantine_threshold: int = 3
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -127,7 +132,12 @@ class MCPProxyServer(server.Server):
             raise ValueError(f"Server name '{name}' cannot contain '__' separator")
 
         self.logger.info(f"try initialize client {name}: {client}")
-        result = await client.initialize()
+        timeout = (
+            self.client_manager._connection_timeout
+            if self.client_manager
+            else 30.0
+        )
+        result = await asyncio.wait_for(client.initialize(), timeout=timeout)
         self.capabilities[name] = result.capabilities
 
         if result.capabilities.tools:
@@ -225,6 +235,107 @@ class MCPProxyServer(server.Server):
             had_resources = caps and caps.resources if caps else False
             if had_resources:
                 await self._send_resources_list_changed()
+    async def toggle_tool(self, server_name: str, tool_name: str, enabled: bool) -> dict:
+        """Enable or disable a single tool at runtime without restarting the server.
+
+        Disabling: removes the tool from tool_to_server (invisible to new clients)
+                   and adds it to the server's tool_filters deny list so it stays
+                   disabled through reconnects.
+        Enabling:  reconstructs a ToolMapping from the YAML cache (schemas preserved)
+                   with client=None for lazy servers or the live client if connected,
+                   removes from deny list so reconnects keep it enabled.
+
+        In both cases _send_tools_list_changed() is called so active MCP clients
+        refresh their tool list. Sessions that already received a tool retain it
+        (MCP protocol: clients cache tool lists; toggling is a hint, not a revoke).
+
+        Returns a dict suitable for the /mcp_control JSON response.
+        """
+        key = self._make_key(server_name, tool_name)
+
+        async with self._register_lock:
+            if not enabled:
+                # ── DISABLE ──────────────────────────────────────────────
+                if key not in self.tool_to_server:
+                    return {"status": "noop", "reason": f"tool '{key}' not currently visible"}
+
+                self.tool_to_server.pop(key, None)
+
+                # Update tool_filters so reconnects keep this tool disabled
+                filters = self.client_manager.tool_filters.get(server_name)
+                if filters is None:
+                    filters = {"allow": ["*"], "deny": []}
+                    self.client_manager.tool_filters[server_name] = filters
+                deny = filters.setdefault("deny", [])
+                if tool_name not in deny:
+                    deny.append(tool_name)
+                # Remove from allow list if it was there explicitly
+                allow = filters.get("allow", ["*"])
+                if tool_name in allow:
+                    allow.remove(tool_name)
+
+            else:
+                # ── ENABLE ───────────────────────────────────────────────
+                if key in self.tool_to_server:
+                    return {"status": "noop", "reason": f"tool '{key}' already visible"}
+
+                # Remove from deny list so reconnects keep it enabled
+                filters = self.client_manager.tool_filters.get(server_name, {})
+                deny = filters.get("deny", [])
+                if tool_name in deny:
+                    deny.remove(tool_name)
+                # Ensure it's in the allow list if allow is explicit
+                allow = filters.get("allow", ["*"])
+                if "*" not in allow and tool_name not in allow:
+                    allow.append(tool_name)
+
+                # Reconstruct ToolMapping from YAML cache (schemas preserved since our fix)
+                # Falls back to a minimal Tool if not in cache.
+                cached_tool: Optional[types.Tool] = None
+                if self.client_manager:
+                    server_cfg = self.client_manager.server_configs.get(server_name)
+                    if server_cfg:
+                        # server_configs stores raw dicts; check YAML config separately
+                        pass  # handled below
+
+                # Try to find it in server_configs YAML tool data via MultiMCPConfig
+                # We reconstruct the minimal Tool; full schema comes from YAML via ToolEntry
+                from src.multimcp.yaml_config import MultiMCPConfig  # avoid circular at module level
+                tool_description = ""
+                tool_input_schema: dict = {"type": "object", "properties": {}}
+
+                # Look up in any existing ToolMapping (e.g. from a recently unregistered entry)
+                # or fall back to a stub — real schema arrives on next discovery
+                if hasattr(self, "_yaml_config_ref"):
+                    srv_cfg = getattr(self._yaml_config_ref, "servers", {}).get(server_name)
+                    if srv_cfg:
+                        entry = srv_cfg.tools.get(tool_name)
+                        if entry:
+                            tool_description = entry.description or ""
+                            tool_input_schema = entry.input_schema or tool_input_schema
+
+                cached_tool = types.Tool(
+                    name=key,
+                    description=tool_description,
+                    inputSchema=tool_input_schema,
+                )
+                client = self.client_manager.clients.get(server_name) if self.client_manager else None
+                self.tool_to_server[key] = ToolMapping(
+                    server_name=server_name,
+                    client=client,  # None → lazy-connect on first call
+                    tool=cached_tool,
+                )
+
+        await self._send_tools_list_changed()
+        visible = sum(1 for m in self.tool_to_server.values()
+                      if m.server_name == server_name and m.client is not None)
+        return {
+            "status": "ok",
+            "tool": key,
+            "enabled": enabled,
+            "visible_tools_for_server": visible,
+        }
+
     ## Tools capabilities
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
@@ -272,8 +383,13 @@ class MCPProxyServer(server.Server):
         for server_name in enabled_servers:
             client = self.client_manager.clients.get(server_name)
             if client:
-                await self.initialize_single_client(server_name, client)
-                self.logger.info(f"🔥 Auto-enabled server '{server_name}' via trigger")
+                try:
+                    await self.initialize_single_client(server_name, client)
+                    self.logger.info(f"🔥 Auto-enabled server '{server_name}' via trigger")
+                except Exception as e:
+                    self.logger.warning(
+                        f"⚠️ Trigger-enabled '{server_name}' failed to initialize: {e}"
+                    )
 
         # Re-check tool_to_server in case new tool was just enabled
         if not tool_item:
@@ -320,6 +436,9 @@ class MCPProxyServer(server.Server):
                 if self.client_manager:
                     self.client_manager.record_usage(tool_item.server_name)
 
+                # Success: reset circuit breaker for this tool
+                getattr(self, '_tool_failure_counts', {}).pop(tool_name, None)
+
                 # Notify retrieval pipeline of tool usage (progressive disclosure)
                 if self.retrieval_pipeline is not None:
                     try:
@@ -343,6 +462,25 @@ class MCPProxyServer(server.Server):
                     arguments=arguments,
                     error=error_msg,
                 )
+
+                # Circuit breaker: count consecutive transport failures.
+                # NOTE: We only count exceptions from call_tool (transport-level failures),
+                # NOT result.isError=True (those are tool responses — could be valid arg errors).
+                failure_counts = getattr(self, '_tool_failure_counts', {})
+                count = failure_counts.get(tool_name, 0) + 1
+                failure_counts[tool_name] = count
+                if count >= getattr(self, 'quarantine_threshold', 3):
+                    self.logger.error(
+                        f"🚫 Tool '{tool_name}' has failed {count} consecutive times "
+                        f"with transport errors — auto-quarantining to protect the server. "
+                        f"Call POST /mcp_control {{action: 'toggle_tool', tool: '{original_name}', "
+                        f"server: '{tool_item.server_name}', enabled: true}} to re-enable."
+                    )
+                    self._tool_failure_counts.pop(tool_name, None)
+                    try:
+                        await self.toggle_tool(tool_item.server_name, original_name, enabled=False)
+                    except Exception as quarantine_err:
+                        self.logger.warning(f"⚠️ Auto-quarantine failed for '{tool_name}': {quarantine_err}")
 
                 # Return error to client
                 return types.ServerResult(
