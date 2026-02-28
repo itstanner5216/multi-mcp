@@ -415,7 +415,9 @@ class MCPProxyServer(server.Server):
         all_resources = []
         for key, mapping in self.resource_to_server.items():
             namespaced_resource = mapping.resource.model_copy()
-            namespaced_resource.name = key
+            # Prefix name with server for disambiguation; URI stays raw for lookups
+            original_name = namespaced_resource.name or str(namespaced_resource.uri)
+            namespaced_resource.name = self._make_key(mapping.server_name, original_name)
             all_resources.append(namespaced_resource)
         return types.ServerResult(resources=all_resources)
 
@@ -423,12 +425,13 @@ class MCPProxyServer(server.Server):
         self, req: types.ReadResourceRequest
     ) -> types.ServerResult:
         """Read a resource from the appropriate backend MCP server."""
-        resource_uri = req.params.uri
-        mapping = self.resource_to_server.get(str(resource_uri))
+        resource_uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(resource_uri)
 
         if mapping and mapping.client:
             try:
-                result = await mapping.client.read_resource(req.params.uri)
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
+                result = await mapping.client.read_resource(resource_uri)
                 return types.ServerResult(result)
             except Exception as e:
                 self.logger.error(f"❌ Failed to read resource '{resource_uri}': {e}")
@@ -448,11 +451,12 @@ class MCPProxyServer(server.Server):
         self, req: types.SubscribeRequest
     ) -> types.ServerResult:
         """Subscribe to a resource for updates on a backend MCP server."""
-        uri = req.params.uri
-        mapping = self.resource_to_server.get(str(uri))
+        uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(uri)
 
         if mapping and mapping.client:
             try:
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
                 await mapping.client.subscribe_resource(uri)
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
@@ -473,11 +477,12 @@ class MCPProxyServer(server.Server):
         self, req: types.UnsubscribeRequest
     ) -> types.ServerResult:
         """Unsubscribe from a previously subscribed resource."""
-        uri = req.params.uri
-        mapping = self.resource_to_server.get(str(uri))
+        uri = str(req.params.uri)
+        mapping = self.resource_to_server.get(uri)
 
         if mapping and mapping.client:
             try:
+                # Resource keys are raw URIs (not namespaced) — pass directly to backend
                 await mapping.client.unsubscribe_resource(uri)
                 return types.ServerResult(types.EmptyResult())
             except Exception as e:
@@ -490,7 +495,8 @@ class MCPProxyServer(server.Server):
         return types.ServerResult(
             content=[
                 types.TextContent(
-                    type="text", text=f"Resource '{uri}' not found for unsubscription!"
+                    type="text",
+                    text=f"Resource '{uri}' not found for unsubscription!",
                 )
             ],
             isError=True,
