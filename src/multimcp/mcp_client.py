@@ -40,6 +40,7 @@ PROTECTED_ENV_VARS = {
 
 # Private/internal IP ranges to block for SSRF
 _PRIVATE_RANGES = [
+    ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),

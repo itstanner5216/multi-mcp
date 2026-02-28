@@ -202,3 +202,44 @@ class TestURLValidation:
             await _validate_url("ftp://example.com/file")
         with pytest.raises(ValueError):
             await _validate_url("file:///etc/passwd")
+
+
+class TestSSRFEdgeCases:
+    """Edge cases for SSRF protection."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_ipv6_loopback(self):
+        """IPv6 loopback ::1 must be rejected."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("::1", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://[::1]:8080/api")
+
+    @pytest.mark.asyncio
+    async def test_rejects_zero_ip(self):
+        """0.0.0.0 must be rejected."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("0.0.0.0", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://0.0.0.0:8080/api")
+
+    def test_rejects_empty_hostname(self):
+        """Empty hostname must raise."""
+        with pytest.raises(ValueError):
+            # asyncio.run is safe here — no running loop in sync test context
+            import asyncio as _asyncio
+            _asyncio.run(_validate_url("http://:8080/api"))
+
+    @pytest.mark.asyncio
+    async def test_rejects_fc00_ipv6_ula(self):
+        """IPv6 ULA (fc00::/7, e.g., fd00::1) must be rejected."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("fd00::1", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://[fd00::1]:8080/api")
