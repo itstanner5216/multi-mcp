@@ -39,3 +39,25 @@ async def test_reconnect_closes_old_stack():
             pass
 
     old_stack.aclose.assert_called_once()
+
+
+def test_cleanup_server_state_removes_all_entries():
+    """cleanup_server_state must remove ALL per-server dicts."""
+    mgr = MCPClientManager.__new__(MCPClientManager)
+    mgr.pending_configs = {"srv": {"command": "node"}}
+    mgr.server_configs = {"srv": {"command": "node"}}
+    mgr.tool_filters = {"srv": {"allow": ["*"]}}
+    mgr.idle_timeouts = {"srv": 300}
+    mgr.last_used = {"srv": 12345.0}
+    mgr._creation_locks = {"srv": asyncio.Lock()}
+    mgr.server_stacks = {}
+    mgr.logger = MagicMock()
+
+    mgr.cleanup_server_state("srv")
+
+    assert "srv" not in mgr.pending_configs
+    assert "srv" not in mgr.server_configs
+    assert "srv" not in mgr.tool_filters
+    assert "srv" not in mgr.idle_timeouts
+    assert "srv" not in mgr.last_used
+    assert "srv" not in mgr._creation_locks

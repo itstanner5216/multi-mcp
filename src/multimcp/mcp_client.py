@@ -137,6 +137,19 @@ class MCPClientManager:
         """Get or create a per-server creation lock (lazily initialized)."""
         return self._creation_locks.setdefault(name, asyncio.Lock())
 
+    def cleanup_server_state(self, name: str) -> None:
+        """Remove all per-server state for a fully unregistered server."""
+        self.pending_configs.pop(name, None)
+        self.server_configs.pop(name, None)
+        self.tool_filters.pop(name, None)
+        self.idle_timeouts.pop(name, None)
+        self.last_used.pop(name, None)
+        self._creation_locks.pop(name, None)
+        stack = self.server_stacks.pop(name, None)
+        if stack:
+            # Stack should already be closed by caller, but safety net
+            self.logger.debug(f"Removed server stack for '{name}'")
+
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
 
