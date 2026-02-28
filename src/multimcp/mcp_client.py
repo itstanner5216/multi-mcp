@@ -72,19 +72,19 @@ def _validate_command(command: str) -> None:
         )
 
 
-def _validate_url(url: str) -> None:
-    """Raise ValueError if URL is not safe (SSRF check)."""
+async def _validate_url(url: str) -> None:
+    """Validate URL: reject private/internal IPs (SSRF protection). Async-safe DNS."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed. Only http/https permitted.")
-
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL has no hostname.")
 
-    # Resolve hostname to IP address(es) to prevent DNS rebinding
+    # Async DNS resolution — doesn't block event loop
+    loop = asyncio.get_running_loop()
     try:
-        addrinfos = socket.getaddrinfo(hostname, None)
+        addrinfos = await loop.getaddrinfo(hostname, None)
     except socket.gaierror as e:
         raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
 
@@ -97,7 +97,7 @@ def _validate_url(url: str) -> None:
         for private_range in _PRIVATE_RANGES:
             if ip in private_range:
                 raise ValueError(
-                    f"URL '{url}' resolves to private/internal IP '{ip}' which is not allowed."
+                    f"URL '{url}' resolves to private/internal IP '{ip_str}' which is not allowed."
                 )
 
 
@@ -542,7 +542,7 @@ class MCPClientManager:
                 )
 
             elif url:
-                _validate_url(url)
+                await _validate_url(url)
                 session = await self._connect_url_server(name, url, env, server_stack)
 
             else:

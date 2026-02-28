@@ -128,3 +128,68 @@ class TestCommandValidationSecurity:
             result = asyncio.run(run())
             assert result == [], "Expected empty list when command validation raises"
             mock_validate.assert_called_once_with("/malicious/path/node")
+
+
+import pytest
+import asyncio
+from unittest.mock import patch, AsyncMock
+
+
+class TestURLValidation:
+    """Verify _validate_url SSRF protection and async-safety."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_private_ip_127(self):
+        """Must reject 127.0.0.1."""
+        with pytest.raises(ValueError, match="private|internal"):
+            await _validate_url("http://127.0.0.1:8080/api")
+
+    @pytest.mark.asyncio
+    async def test_rejects_private_ip_localhost(self):
+        """Must reject localhost (resolves to 127.x)."""
+        # Mock loop.getaddrinfo to return loopback
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://localhost:8080/api")
+
+    @pytest.mark.asyncio
+    async def test_rejects_link_local(self):
+        """Must reject 169.254.x.x (link-local / cloud metadata)."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("169.254.169.254", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://169.254.169.254/metadata")
+
+    @pytest.mark.asyncio
+    async def test_rejects_private_ranges(self):
+        """Must reject 10.x.x.x, 172.16-31.x.x, 192.168.x.x."""
+        for ip in ["10.0.0.1", "172.16.0.1", "192.168.1.1"]:
+            with patch("asyncio.get_running_loop") as mock_loop:
+                mock_loop.return_value.getaddrinfo = AsyncMock(
+                    return_value=[(None, None, None, None, (ip, 0))]
+                )
+                with pytest.raises(ValueError, match="private|internal"):
+                    await _validate_url(f"http://{ip}:8080/api")
+
+    @pytest.mark.asyncio
+    async def test_allows_public_ip(self):
+        """Public IPs should pass validation."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("8.8.8.8", 0))]
+            )
+            # Should not raise
+            await _validate_url("http://example.com:8080/api")
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_http_scheme(self):
+        """Must reject non-http(s) schemes."""
+        with pytest.raises(ValueError):
+            await _validate_url("ftp://example.com/file")
+        with pytest.raises(ValueError):
+            await _validate_url("file:///etc/passwd")
