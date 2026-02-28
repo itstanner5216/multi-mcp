@@ -38,6 +38,11 @@ class RetrievalSettings(BaseModel):
 class MultiMCPConfig(BaseModel):
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
+    """Extra file/directory paths to scan for MCP configs (in addition to auto-detected editors)."""
+    exclude_sources: list[str] = Field(default_factory=list)
+    """File paths to skip during auto-scan (e.g. to ignore a specific editor's config)."""
+    exclude_servers: list[str] = Field(default_factory=list)
+    """Server names to never auto-import, even if found in editor configs."""
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
 
 

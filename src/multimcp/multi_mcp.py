@@ -182,42 +182,90 @@ class MultiMCP:
         return normalized
 
     def _scan_claude_desktop_configs(self) -> dict[str, dict]:
-        """Scan standard Claude Desktop config locations for MCP server definitions.
+        """Scan MCP server configs from all common editors and AI tools.
 
-        Claude Desktop stores its MCP server list in claude_desktop_config.json.
-        Locations vary by OS:
-          Linux:   ~/.config/Claude/claude_desktop_config.json
-          macOS:   ~/Library/Application Support/Claude/claude_desktop_config.json
-          Windows: %APPDATA%/Claude/claude_desktop_config.json
+        Covers: Claude Desktop, VSCode, VSCode Insiders, Cursor, Windsurf,
+                Zed (context_servers), Copilot CLI, OpenCode, Gemini CLI,
+                and any tool that writes a standard MCP config file.
 
-        Skips the 'multi-mcp' entry to avoid connecting to ourselves as a backend.
+        _extract_mcp_servers already handles all key formats:
+          mcpServers  — Claude Desktop, Copilot CLI, OpenCode
+          servers     — VSCode, Cursor, Windsurf
+          mcp         — Gemini, OpenCode alternate
+
+        Skips the 'multi-mcp' entry to avoid connecting to ourselves.
         """
-        candidates = [
-            Path.home() / ".config" / "Claude" / "claude_desktop_config.json",
-            Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json",
-        ]
-        appdata = os.environ.get("APPDATA")
-        if appdata:
-            candidates.append(Path(appdata) / "Claude" / "claude_desktop_config.json")
+        home = Path.home()
+        app_support = home / "Library" / "Application Support"  # macOS
+        appdata = Path(os.environ["APPDATA"]) if os.environ.get("APPDATA") else None
 
+        # Each tuple is (label, path)
+        candidates: list[tuple[str, Path]] = [
+            # Claude Desktop
+            ("Claude Desktop", home / ".config" / "Claude" / "claude_desktop_config.json"),
+            ("Claude Desktop", app_support / "Claude" / "claude_desktop_config.json"),
+            # VSCode / VSCode Insiders (dedicated MCP file, uses "servers" key)
+            ("VSCode", home / ".config" / "Code" / "User" / "mcp.json"),
+            ("VSCode Insiders", home / ".config" / "Code - Insiders" / "User" / "mcp.json"),
+            ("VSCode", app_support / "Code" / "User" / "mcp.json"),
+            # Cursor
+            ("Cursor", home / ".cursor" / "mcp.json"),
+            ("Cursor", app_support / "Cursor" / "User" / "mcp.json"),
+            # Windsurf (Codeium)
+            ("Windsurf", home / ".codeium" / "windsurf" / "mcp_server_config.json"),
+            # Zed (uses "context_servers" key — handled below via custom extraction)
+            ("Zed", home / ".config" / "zed" / "settings.json"),
+            # OpenCode
+            ("OpenCode", home / ".config" / "opencode" / "config.json"),
+            ("OpenCode", home / ".opencode" / "config.json"),
+        ]
+        if appdata:
+            candidates += [
+                ("Claude Desktop", appdata / "Claude" / "claude_desktop_config.json"),
+                ("VSCode", appdata / "Code" / "User" / "mcp.json"),
+                ("Cursor", appdata / "Cursor" / "User" / "mcp.json"),
+            ]
+
+        # Build resolved exclusion set from callers that pass config
         servers: dict[str, dict] = {}
-        for cfg_path in candidates:
+        for label, cfg_path in candidates:
             if not cfg_path.exists():
                 continue
             try:
                 with open(cfg_path) as f:
                     data = json.load(f)
+
+                # Zed uses "context_servers" with a slightly different shape
+                if "context_servers" in data:
+                    raw = data["context_servers"]
+                    if isinstance(raw, dict):
+                        data = {"servers": raw}
+
                 extracted = self._extract_mcp_servers(data)
-                # Skip self-referential entry to avoid connecting to ourselves as a backend
-                extracted.pop("multi-mcp", None)
+                extracted.pop("multi-mcp", None)  # don't connect to ourselves
                 if extracted:
                     self.logger.info(
-                        f"🖥️ Found {len(extracted)} server(s) in Claude Desktop config: {cfg_path}"
+                        f"🖥️ Found {len(extracted)} server(s) in {label} config: {cfg_path}"
                     )
-                    servers.update(extracted)
+                    for name, srv in extracted.items():
+                        if name not in servers:
+                            servers[name] = srv
             except (json.JSONDecodeError, OSError) as e:
-                self.logger.warning(f"⚠️ Failed to read Claude Desktop config {cfg_path}: {e}")
+                self.logger.warning(f"⚠️ Failed to read {label} config {cfg_path}: {e}")
         return servers
+
+    def _apply_source_exclusions(
+        self, servers: dict[str, dict], config: "MultiMCPConfig"
+    ) -> dict[str, dict]:
+        """Remove servers that the user has excluded via exclude_servers in YAML."""
+        excluded = set(getattr(config, "exclude_servers", []))
+        if not excluded:
+            return servers
+        filtered = {k: v for k, v in servers.items() if k not in excluded}
+        skipped = excluded & servers.keys()
+        if skipped:
+            self.logger.info(f"⛔ Skipping excluded servers: {', '.join(sorted(skipped))}")
+        return filtered
 
     def _scan_claude_plugins(self) -> dict[str, dict]:
         """Scan Claude Code plugin cache for active MCP server configs.
@@ -327,8 +375,11 @@ class MultiMCP:
                     if name not in all_json_servers:
                         all_json_servers[name] = srv
 
+        excluded = set(getattr(config, "exclude_servers", []))
         new_servers = {}
         for name, srv in all_json_servers.items():
+            if name in excluded:
+                continue
             if name not in config.servers:
                 valid_fields = ServerConfig.model_fields.keys()
                 filtered = {k: v for k, v in srv.items() if k in valid_fields}
