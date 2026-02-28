@@ -135,9 +135,7 @@ class MCPClientManager:
 
     def _get_creation_lock(self, name: str) -> asyncio.Lock:
         """Get or create a per-server creation lock (lazily initialized)."""
-        if name not in self._creation_locks:
-            self._creation_locks[name] = asyncio.Lock()
-        return self._creation_locks[name]
+        return self._creation_locks.setdefault(name, asyncio.Lock())
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
