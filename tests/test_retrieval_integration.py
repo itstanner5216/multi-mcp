@@ -42,7 +42,7 @@ class TestProxyPipelineIntegration:
 
     @pytest.mark.asyncio
     async def test_list_tools_without_pipeline(self):
-        """Without pipeline (None), _list_tools returns all connected tools."""
+        """Without pipeline (None), _list_tools returns all tools including cached."""
         proxy = self._make_proxy(pipeline=None)
         from src.multimcp.mcp_proxy import ToolMapping
         proxy.tool_to_server["github__get_me"] = ToolMapping(

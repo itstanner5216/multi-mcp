@@ -54,11 +54,11 @@ class RetrievalPipeline:
     async def get_tools_for_list(self, session_id: str) -> list[types.Tool]:
         """Called by _list_tools(). Returns tool list based on pipeline state.
 
-        When disabled: returns all tools with connected clients (backward compat).
+        When disabled: returns ALL tools including cached/disconnected (client=None).
         When enabled: returns only tools in the session's active set.
         """
         if not self.config.enabled:
-            return [m.tool for m in self.tool_registry.values() if m.client is not None]
+            return [m.tool for m in self.tool_registry.values()]
 
         # Ensure session exists with anchor tools
         self.session_manager.get_or_create_session(session_id)
@@ -68,7 +68,7 @@ class RetrievalPipeline:
         active_mappings = []
         for key in active_keys:
             mapping = self.tool_registry.get(key)
-            if mapping and mapping.client is not None:
+            if mapping:
                 active_mappings.append((key, mapping))
 
         # If ranker and assembler are wired, use full pipeline
