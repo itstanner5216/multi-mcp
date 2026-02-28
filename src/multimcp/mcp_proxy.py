@@ -604,13 +604,21 @@ class MCPProxyServer(server.Server):
         return (parts[0], parts[1])
 
     async def _on_server_disconnected(self, server_name: str) -> None:
-        """Reset tool mappings for a disconnected server and notify client."""
+        """Reset tool, prompt, and resource mappings for a disconnected server and notify client."""
         async with self._register_lock:
             for key, mapping in self.tool_to_server.items():
                 if mapping.server_name == server_name:
                     mapping.client = None
+            for key, mapping in self.prompt_to_server.items():
+                if mapping.server_name == server_name:
+                    mapping.client = None
+            for key, mapping in self.resource_to_server.items():
+                if mapping.server_name == server_name:
+                    mapping.client = None
         await self._send_tools_list_changed()
-        self.logger.info(f"🔄 Reset tool mappings for disconnected server '{server_name}'")
+        await self._send_prompts_list_changed()
+        await self._send_resources_list_changed()
+        self.logger.info(f"🔄 Reset tool, prompt, and resource mappings for disconnected server '{server_name}'")
 
     async def _send_tools_list_changed(self) -> None:
         """Send tools/list_changed notification if a session is active."""
