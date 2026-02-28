@@ -587,8 +587,9 @@ class MultiMCP:
         method = request.method
 
         if method == "GET":
-            servers = list(self.proxy.client_manager.clients.keys())
-            return JSONResponse({"active_servers": servers})
+            active = list(self.proxy.client_manager.clients.keys())
+            pending = list(self.proxy.client_manager.pending_configs.keys())
+            return JSONResponse({"active_servers": active, "pending_servers": pending})
 
         elif method == "POST":
             try:

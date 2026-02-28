@@ -132,3 +132,83 @@ async def test_health_endpoint_zero_servers(multi_mcp):
     assert body["status"] == "healthy"
     assert body["connected_servers"] == 0
     assert body["pending_servers"] == 0
+
+
+# ---------------------------------------------------------------------------
+# GET /mcp_servers — pending server visibility fix
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_mcp_servers_returns_active_and_pending(multi_mcp):
+    """GET /mcp_servers must return both active (connected) and pending servers.
+
+    Before this fix, only self.proxy.client_manager.clients.keys() was returned.
+    On startup with lazy/on-demand servers, clients is always empty so users
+    saw active_servers: [] despite having 13 configured servers.
+    """
+    import json as _json
+
+    proxy = MagicMock(spec=MCPProxyServer)
+    client_manager = MagicMock(spec=MCPClientManager)
+    client_manager.clients = {"github": MagicMock()}
+    client_manager.pending_configs = {"exa": {}, "tavily": {}, "context7": {}}
+    proxy.client_manager = client_manager
+    multi_mcp.proxy = proxy
+
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+
+    response = await multi_mcp.handle_mcp_servers(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 200
+
+    body = _json.loads(response.body.decode())
+    assert "active_servers" in body
+    assert "pending_servers" in body
+    assert body["active_servers"] == ["github"]
+    assert set(body["pending_servers"]) == {"exa", "tavily", "context7"}
+
+
+@pytest.mark.asyncio
+async def test_get_mcp_servers_all_pending_at_startup(multi_mcp):
+    """Startup state: clients empty, all servers pending — response must show them."""
+    import json as _json
+
+    proxy = MagicMock(spec=MCPProxyServer)
+    client_manager = MagicMock(spec=MCPClientManager)
+    client_manager.clients = {}  # Nothing connected yet (lazy startup)
+    client_manager.pending_configs = {"server_a": {}, "server_b": {}}
+    proxy.client_manager = client_manager
+    multi_mcp.proxy = proxy
+
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+
+    response = await multi_mcp.handle_mcp_servers(request)
+
+    body = _json.loads(response.body.decode())
+    assert body["active_servers"] == []
+    assert set(body["pending_servers"]) == {"server_a", "server_b"}
+
+
+@pytest.mark.asyncio
+async def test_get_mcp_servers_all_active_none_pending(multi_mcp):
+    """All servers connected (e.g., always_on) — pending_servers is empty list."""
+    import json as _json
+
+    proxy = MagicMock(spec=MCPProxyServer)
+    client_manager = MagicMock(spec=MCPClientManager)
+    client_manager.clients = {"srv1": MagicMock(), "srv2": MagicMock()}
+    client_manager.pending_configs = {}
+    proxy.client_manager = client_manager
+    multi_mcp.proxy = proxy
+
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+
+    response = await multi_mcp.handle_mcp_servers(request)
+
+    body = _json.loads(response.body.decode())
+    assert set(body["active_servers"]) == {"srv1", "srv2"}
+    assert body["pending_servers"] == []
