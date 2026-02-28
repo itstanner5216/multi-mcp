@@ -91,15 +91,8 @@ class TestCommandValidationSecurity:
         with pytest.raises(ValueError):
             _validate_command("subdir/node")
 
-    def test_discover_stdio_rejects_path_command(self):
-        """_discover_stdio enforces _validate_command before creating StdioServerParameters.
-
-        This test verifies that the _discover_stdio code path calls _validate_command,
-        which raises ValueError for path-containing commands. It mocks _validate_command
-        to directly assert it is invoked, then confirms path commands raise ValueError.
-        """
-        # Directly verify that _validate_command raises for a path command —
-        # this is the guard that _discover_stdio now calls before StdioServerParameters.
+    def test_validate_command_rejects_path_separators(self):
+        """_validate_command raises ValueError for any command containing path separators."""
         with pytest.raises(ValueError, match="path separators"):
             _validate_command("/tmp/evil_binary")
 
