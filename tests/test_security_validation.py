@@ -140,9 +140,14 @@ class TestURLValidation:
 
     @pytest.mark.asyncio
     async def test_rejects_private_ip_127(self):
-        """Must reject 127.0.0.1."""
-        with pytest.raises(ValueError, match="private|internal"):
-            await _validate_url("http://127.0.0.1:8080/api")
+        """Must reject 127.0.0.1 direct IP."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
+            with pytest.raises(ValueError, match="private|internal"):
+                await _validate_url("http://127.0.0.1:8080/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rejects_private_ip_localhost(self):
@@ -154,6 +159,7 @@ class TestURLValidation:
             )
             with pytest.raises(ValueError, match="private|internal"):
                 await _validate_url("http://localhost:8080/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rejects_link_local(self):
@@ -164,6 +170,7 @@ class TestURLValidation:
             )
             with pytest.raises(ValueError, match="private|internal"):
                 await _validate_url("http://169.254.169.254/metadata")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rejects_private_ranges(self):
@@ -175,6 +182,7 @@ class TestURLValidation:
                 )
                 with pytest.raises(ValueError, match="private|internal"):
                     await _validate_url(f"http://{ip}:8080/api")
+                assert mock_loop.return_value.getaddrinfo.await_count > 0
 
     @pytest.mark.asyncio
     async def test_allows_public_ip(self):
@@ -185,6 +193,7 @@ class TestURLValidation:
             )
             # Should not raise
             await _validate_url("http://example.com:8080/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_rejects_non_http_scheme(self):

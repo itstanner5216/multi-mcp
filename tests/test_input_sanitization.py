@@ -96,6 +96,7 @@ class TestUrlValidation:
             )
             with pytest.raises(ValueError):
                 await _validate_url("http://localhost/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_127_0_0_1_blocked(self):
@@ -106,6 +107,7 @@ class TestUrlValidation:
             )
             with pytest.raises(ValueError):
                 await _validate_url("http://127.0.0.1/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_private_ip_range_blocked(self):
@@ -116,6 +118,7 @@ class TestUrlValidation:
             )
             with pytest.raises(ValueError):
                 await _validate_url("http://internal.corp/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_non_http_scheme_blocked(self):
@@ -138,6 +141,7 @@ class TestUrlValidation:
             )
             # Should not raise
             await _validate_url("http://example.com/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
