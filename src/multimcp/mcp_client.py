@@ -19,10 +19,28 @@ from src.utils.logger import get_logger
 DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker"}
 
 # Env vars that cannot be overridden by server config
-PROTECTED_ENV_VARS = {"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "HOME", "USER", "PYTHONPATH", "PYTHONHOME"}
+PROTECTED_ENV_VARS = {
+    # Linux loader injection
+    "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+    # macOS loader injection
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    # Python injection
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP",
+    # Node.js injection (--require executes arbitrary code)
+    "NODE_OPTIONS", "NODE_PATH", "NODE_EXTRA_CA_CERTS",
+    # Shell startup execution
+    "BASH_ENV", "ENV", "ZDOTDIR",
+    # Traffic interception
+    "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "all_proxy",
+    # Identity / system
+    "HOME", "USER",
+    # Other runtime injection
+    "PERL5LIB", "PERL5OPT", "RUBYLIB", "RUBYOPT",
+}
 
 # Private/internal IP ranges to block for SSRF
 _PRIVATE_RANGES = [
+    ipaddress.ip_network("0.0.0.0/8"),
     ipaddress.ip_network("127.0.0.0/8"),
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -42,31 +60,32 @@ def _get_allowed_commands() -> set:
 
 
 def _validate_command(command: str) -> None:
-    """Raise ValueError if command is not in the allowed list."""
-    # Extract just the basename in case a full path is provided
+    """Validate that the command is in the allowed list and has no path components."""
+    if os.sep in command or "/" in command or "\\" in command:
+        raise ValueError(
+            f"Command '{command}' contains path separators — only bare command names are allowed"
+        )
     cmd_name = os.path.basename(command)
     allowed = _get_allowed_commands()
     if cmd_name not in allowed:
         raise ValueError(
-            f"Command '{command}' is not in the allowed commands list. "
-            f"Allowed: {sorted(allowed)}. "
-            f"Set MULTI_MCP_ALLOWED_COMMANDS to override."
+            f"Command '{cmd_name}' is not in allowed commands: {allowed}"
         )
 
 
-def _validate_url(url: str) -> None:
-    """Raise ValueError if URL is not safe (SSRF check)."""
+async def _validate_url(url: str) -> None:
+    """Validate URL: reject private/internal IPs (SSRF protection). Async-safe DNS."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed. Only http/https permitted.")
-
     hostname = parsed.hostname
     if not hostname:
         raise ValueError("URL has no hostname.")
 
-    # Resolve hostname to IP address(es) to prevent DNS rebinding
+    # Async DNS resolution — doesn't block event loop
+    loop = asyncio.get_running_loop()
     try:
-        addrinfos = socket.getaddrinfo(hostname, None)
+        addrinfos = await loop.getaddrinfo(hostname, None)
     except socket.gaierror as e:
         raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
 
@@ -79,7 +98,7 @@ def _validate_url(url: str) -> None:
         for private_range in _PRIVATE_RANGES:
             if ip in private_range:
                 raise ValueError(
-                    f"URL '{url}' resolves to private/internal IP '{ip}' which is not allowed."
+                    f"URL '{url}' resolves to private/internal IP '{ip_str}' which is not allowed."
                 )
 
 
@@ -117,9 +136,21 @@ class MCPClientManager:
 
     def _get_creation_lock(self, name: str) -> asyncio.Lock:
         """Get or create a per-server creation lock (lazily initialized)."""
-        if name not in self._creation_locks:
-            self._creation_locks[name] = asyncio.Lock()
-        return self._creation_locks[name]
+        return self._creation_locks.setdefault(name, asyncio.Lock())
+
+    def cleanup_server_state(self, name: str) -> None:
+        """Remove all per-server state for a fully unregistered server."""
+        self.pending_configs.pop(name, None)
+        self.server_configs.pop(name, None)
+        self.tool_filters.pop(name, None)
+        self.idle_timeouts.pop(name, None)
+        self.last_used.pop(name, None)
+        self._creation_locks.pop(name, None)
+        self.clients.pop(name, None)
+        stack = self.server_stacks.pop(name, None)
+        if stack:
+            # Stack should already be closed by caller, but safety net
+            self.logger.debug(f"Removed server stack for '{name}'")
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
@@ -314,6 +345,8 @@ class MCPClientManager:
         try:
             await server_stack.__aenter__()
             command = server_dict.get("command")
+            if command:
+                _validate_command(command)
             args = server_dict.get("args", [])
             env = server_dict.get("env", {})
             safe_env = _filter_env(env)
@@ -449,6 +482,8 @@ class MCPClientManager:
                         server_stack = AsyncExitStack()
                         await server_stack.__aenter__()
                         command = server_config.get("command")
+                        if command:
+                            _validate_command(command)
                         url = server_config.get("url")
                         args = server_config.get("args", [])
                         env = server_config.get("env", {})
@@ -494,6 +529,14 @@ class MCPClientManager:
             name (str): Server name
             server (dict): Server configuration
         """
+        # Close any existing stack for this server to prevent leaks on reconnection
+        existing_stack = self.server_stacks.get(name)
+        if existing_stack:
+            try:
+                await existing_stack.aclose()
+            except Exception as e:
+                self.logger.warning(f"⚠️ Error closing old stack for '{name}': {e}")
+
         server_stack = AsyncExitStack()
         await server_stack.__aenter__()
 
@@ -520,7 +563,7 @@ class MCPClientManager:
                 )
 
             elif url:
-                _validate_url(url)
+                await _validate_url(url)
                 session = await self._connect_url_server(name, url, env, server_stack)
 
             else:
@@ -579,18 +622,6 @@ class MCPClientManager:
             await self._create_single_client(name, server)
 
         return self.clients
-
-    def get_client(self, name: str) -> Optional[ClientSession]:
-        """
-        Retrieves an existing client by name.
-
-        Args:
-            name (str): The name of the client (as defined in config).
-
-        Returns:
-            Optional[ClientSession]: The ClientSession object, or None if not found.
-        """
-        return self.clients.get(name)
 
     async def close(self) -> None:
         """

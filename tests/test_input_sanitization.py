@@ -59,8 +59,9 @@ class TestCommandValidation:
                 _validate_command(cmd)
 
     def test_command_basename_extracted(self):
-        """Full path to an allowed command should pass (basename is 'node')."""
-        _validate_command("/usr/bin/node")  # must not raise
+        """Full paths are rejected — only bare command names are allowed (path traversal fix)."""
+        with pytest.raises(ValueError):
+            _validate_command("/usr/bin/node")  # path separators are now rejected
 
     def test_disallowed_full_path_raises(self):
         """Full path whose basename is not allowed must raise ValueError."""
@@ -85,42 +86,62 @@ class TestCommandValidation:
 class TestUrlValidation:
     """Tests for _validate_url() SSRF protection."""
 
-    def test_localhost_url_blocked(self):
+    @pytest.mark.asyncio
+    async def test_localhost_url_blocked(self):
         """http://localhost must be rejected (resolves to 127.0.0.1)."""
-        # socket.getaddrinfo will return loopback for 'localhost'
-        with pytest.raises(ValueError):
-            _validate_url("http://localhost/api")
+        # loop.getaddrinfo will return loopback for 'localhost'
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
+            with pytest.raises(ValueError):
+                await _validate_url("http://localhost/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
-    def test_127_0_0_1_blocked(self):
+    @pytest.mark.asyncio
+    async def test_127_0_0_1_blocked(self):
         """Direct loopback IP must be rejected."""
-        with patch("socket.getaddrinfo") as mock_gai:
-            mock_gai.return_value = [(None, None, None, None, ("127.0.0.1", 0))]
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
             with pytest.raises(ValueError):
-                _validate_url("http://127.0.0.1/api")
+                await _validate_url("http://127.0.0.1/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
-    def test_private_ip_range_blocked(self):
+    @pytest.mark.asyncio
+    async def test_private_ip_range_blocked(self):
         """URLs that resolve to RFC-1918 private IPs must be rejected."""
-        with patch("socket.getaddrinfo") as mock_gai:
-            mock_gai.return_value = [(None, None, None, None, ("192.168.1.1", 0))]
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("192.168.1.1", 0))]
+            )
             with pytest.raises(ValueError):
-                _validate_url("http://internal.corp/api")
+                await _validate_url("http://internal.corp/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
-    def test_non_http_scheme_blocked(self):
+    @pytest.mark.asyncio
+    async def test_non_http_scheme_blocked(self):
         """Non-http/https schemes must be rejected."""
         with pytest.raises(ValueError):
-            _validate_url("ftp://example.com/file")
+            await _validate_url("ftp://example.com/file")
 
-    def test_file_scheme_blocked(self):
+    @pytest.mark.asyncio
+    async def test_file_scheme_blocked(self):
         """file:// scheme must be rejected."""
         with pytest.raises(ValueError):
-            _validate_url("file:///etc/passwd")
+            await _validate_url("file:///etc/passwd")
 
-    def test_public_url_accepted(self):
+    @pytest.mark.asyncio
+    async def test_public_url_accepted(self):
         """A URL resolving to a public IP must pass validation."""
-        with patch("socket.getaddrinfo") as mock_gai:
-            mock_gai.return_value = [(None, None, None, None, ("8.8.8.8", 0))]
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("8.8.8.8", 0))]
+            )
             # Should not raise
-            _validate_url("http://example.com/api")
+            await _validate_url("http://example.com/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

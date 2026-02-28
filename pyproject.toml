@@ -32,4 +32,5 @@ test = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 filterwarnings = ["ignore::pydantic.warnings.PydanticDeprecatedSince20"]
