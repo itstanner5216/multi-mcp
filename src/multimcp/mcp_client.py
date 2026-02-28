@@ -275,12 +275,24 @@ class MCPClientManager:
                 results[name] = []
                 continue
 
-            if url:
-                # SSE: use direct async-with to stay within anyio's cancel scope rules
-                results[name] = await self._discover_sse(name, url, server_config)
-            else:
-                # stdio: use AsyncExitStack so always_on servers can stay connected
-                results[name] = await self._discover_stdio(name, server_dict, server_config)
+            try:
+                if url:
+                    # SSE: use direct async-with to stay within anyio's cancel scope rules
+                    results[name] = await asyncio.wait_for(
+                        self._discover_sse(name, url, server_config),
+                        timeout=self._connection_timeout,
+                    )
+                else:
+                    # stdio: use AsyncExitStack so always_on servers can stay connected
+                    results[name] = await asyncio.wait_for(
+                        self._discover_stdio(name, server_dict, server_config),
+                        timeout=self._connection_timeout,
+                    )
+            except asyncio.TimeoutError:
+                self.logger.error(
+                    f"❌ Discovery timeout for '{name}' (>{self._connection_timeout}s) — skipping"
+                )
+                results[name] = []
 
         return results
 
@@ -401,13 +413,18 @@ class MCPClientManager:
                 )
             return tools
 
-        except Exception as e:
-            self.logger.error(f"❌ Discovery failed for '{name}': {e}")
+        except BaseException as e:
+            # Catch BaseException (not just Exception) so asyncio.CancelledError
+            # from wait_for timeouts also triggers cleanup of the subprocess stack.
+            if not isinstance(e, asyncio.CancelledError):
+                self.logger.error(f"❌ Discovery failed for '{name}': {e}")
             try:
                 await server_stack.aclose()
             except Exception:
                 pass
-            return []
+            if isinstance(e, Exception):
+                return []  # Normal exception — caller gets empty tool list
+            raise  # Re-raise CancelledError so wait_for converts it to TimeoutError
 
     async def _connect_url_server(
         self,
