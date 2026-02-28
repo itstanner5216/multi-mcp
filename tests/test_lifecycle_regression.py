@@ -35,20 +35,22 @@ def _make_tool(name: str) -> types.Tool:
 
 
 def _make_proxy_with_tools(
-    server_name: str, tool_names: list[str]
+    server_name: str, tool_names: list[str], *, connected: bool = False
 ) -> tuple[MCPProxyServer, MCPClientManager]:
     """Create a proxy pre-loaded with tools but NO real clients.
 
     Uses the direct constructor (not MCPProxyServer.create) so no network
-    connections are attempted.
+    connections are attempted.  Pass connected=True to set a mock client
+    so tools appear in _list_tools (which filters out client=None).
     """
     cm = MCPClientManager()
     proxy = MCPProxyServer(cm)
+    mock_client = object() if connected else None
     for t in tool_names:
         key = proxy._make_key(server_name, t)
         proxy.tool_to_server[key] = ToolMapping(
             server_name=server_name,
-            client=None,
+            client=mock_client,
             tool=_make_tool(key),
         )
     return proxy, cm
@@ -299,7 +301,7 @@ class TestMcpToolsParity:
     @pytest.mark.asyncio
     async def test_get_filtered_tools_matches_list_tools_tool_names(self):
         """get_filtered_tools and _list_tools both read from tool_to_server."""
-        proxy, cm = _make_proxy_with_tools("srv", ["tool_a", "tool_b"])
+        proxy, cm = _make_proxy_with_tools("srv", ["tool_a", "tool_b"], connected=True)
 
         # get_filtered_tools() → grouped by server, tool names are the unnamespaced part
         filtered = proxy.get_filtered_tools()
@@ -315,7 +317,7 @@ class TestMcpToolsParity:
     @pytest.mark.asyncio
     async def test_get_filtered_tools_same_count_as_list_tools(self):
         """get_filtered_tools and _list_tools expose the same number of tools."""
-        proxy, cm = _make_proxy_with_tools("srv", ["alpha", "beta", "gamma"])
+        proxy, cm = _make_proxy_with_tools("srv", ["alpha", "beta", "gamma"], connected=True)
 
         filtered = proxy.get_filtered_tools()
         total_filtered = sum(len(v) for v in filtered.values())
