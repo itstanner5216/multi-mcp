@@ -84,3 +84,35 @@ async def test_trigger_manager_catches_timeout_error():
     ):
         result = await mgr.check_and_enable({"content": "hello world"})
         assert result == []
+
+
+@pytest.mark.asyncio
+async def test_trigger_manager_catches_key_error():
+    """Trigger manager must catch KeyError from get_or_create_client.
+
+    KeyError is raised when a server name is not found in pending_configs or
+    clients (race condition: server removed between iteration snapshot and connect).
+    The old specific except clause missed KeyError, causing the trigger to crash.
+    """
+    from src.multimcp.mcp_trigger_manager import MCPTriggerManager
+
+    client_manager = MagicMock()
+    mgr = MCPTriggerManager(client_manager)
+
+    client_manager.pending_configs = {"test-server": {"triggers": ["hello"]}}
+    client_manager.get_or_create_client = AsyncMock(
+        side_effect=KeyError("test-server")
+    )
+
+    with (
+        patch(
+            "src.multimcp.mcp_trigger_manager.extract_keywords_from_message",
+            return_value="hello world",
+        ),
+        patch(
+            "src.multimcp.mcp_trigger_manager.match_triggers",
+            return_value=True,
+        ),
+    ):
+        result = await mgr.check_and_enable({"content": "hello world"})
+        assert result == []  # Must not raise, must return empty list
