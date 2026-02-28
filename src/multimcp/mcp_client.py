@@ -48,6 +48,7 @@ _PRIVATE_RANGES = [
     ipaddress.ip_network("169.254.0.0/16"),
     ipaddress.ip_network("::1/128"),
     ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
 ]
 
 
@@ -103,8 +104,8 @@ async def _validate_url(url: str) -> None:
 
 
 def _filter_env(env: dict) -> dict:
-    """Remove protected env vars from the server-provided env dict."""
-    return {k: v for k, v in env.items() if k not in PROTECTED_ENV_VARS}
+    """Remove protected env vars and coerce all values to str for subprocess safety."""
+    return {k: str(v) for k, v in env.items() if k not in PROTECTED_ENV_VARS}
 
 
 class MCPClientManager:
@@ -220,7 +221,11 @@ class MCPClientManager:
                             timeout=self._connection_timeout,
                         )
                     except asyncio.TimeoutError:
+                        self.pending_configs[name] = config  # restore for retry
                         self.logger.error(f"❌ Connection timeout for {name}")
+                        raise
+                    except Exception:
+                        self.pending_configs[name] = config  # restore for retry
                         raise
                 self.record_usage(name)
                 return self.clients[name]
@@ -442,18 +447,20 @@ class MCPClientManager:
         for name in to_disconnect:
             self.logger.info(f"💤 Disconnecting idle server: {name}")
             del self.clients[name]
-            # Close the server stack if it exists
+            # Restore config for reconnection BEFORE any await so get_or_create_client
+            # never sees a window where the server is neither connected nor pending.
+            if name in self.server_configs:
+                self.pending_configs[name] = self.server_configs[name]
+            # Clean up runtime state; keep tool_filters and idle_timeouts (config for reconnection)
+            self.last_used.pop(name, None)
+            self._creation_locks.pop(name, None)
+            # Close the server stack if it exists (yields to event loop — do after state restore)
             stack = self.server_stacks.pop(name, None)
             if stack:
                 try:
                     await stack.aclose()
                 except Exception as e:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
-            if name in self.server_configs:
-                self.pending_configs[name] = self.server_configs[name]
-            # Clean up runtime state; keep tool_filters and idle_timeouts (config for reconnection)
-            self.last_used.pop(name, None)
-            self._creation_locks.pop(name, None)
             if self._on_server_disconnected:
                 try:
                     await self._on_server_disconnected(name)
@@ -633,4 +640,5 @@ class MCPClientManager:
             except Exception as e:
                 self.logger.warning(f"⚠️ Error closing server stack for '{name}': {e}")
         self.server_stacks.clear()
+        self.clients.clear()
         await self.stack.aclose()

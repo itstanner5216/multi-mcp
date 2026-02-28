@@ -2,7 +2,6 @@
 Keyword matching utilities for trigger-based server activation.
 """
 
-import json
 from typing import List, Any
 
 
