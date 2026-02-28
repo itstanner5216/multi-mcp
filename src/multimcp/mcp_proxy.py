@@ -228,20 +228,18 @@ class MCPProxyServer(server.Server):
             # TODO: extract real session_id from MCP request context when available
             tools = await self.retrieval_pipeline.get_tools_for_list("default")
             return types.ServerResult(tools=tools)
-        all_tools = [mapping.tool for mapping in self.tool_to_server.values() if mapping.client is not None]
+        all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
 
     def get_filtered_tools(self) -> dict[str, list[str]]:
         """Return the filtered tool list grouped by server (same view as MCP tools/list).
 
         Uses the proxy's tool_to_server registry which already has filters applied.
-        Only includes tools from connected servers (client is not None) to match
-        the MCP protocol tools/list behavior.
+        Includes cached tools (client=None) to match the MCP protocol tools/list
+        behavior — tools are visible before servers connect.
         """
         tools_by_server: dict[str, list[str]] = {}
         for key, mapping in self.tool_to_server.items():
-            if mapping.client is None:
-                continue
             server = mapping.server_name
             _, tool_name = self._split_key(key)
             if server not in tools_by_server:

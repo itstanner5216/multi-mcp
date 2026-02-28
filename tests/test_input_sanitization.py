@@ -54,19 +54,17 @@ class TestCommandValidation:
 
     def test_disallowed_command_raises(self):
         """Commands not in the allowlist must raise ValueError."""
-        for cmd in ("bash", "sh", "curl", "wget"):
+        for cmd in ("curl", "wget", "rm", "cat"):
             with pytest.raises(ValueError):
                 _validate_command(cmd)
 
-    def test_command_basename_extracted(self):
-        """Full paths are rejected — only bare command names are allowed (path traversal fix)."""
-        with pytest.raises(ValueError):
-            _validate_command("/usr/bin/node")  # path separators are now rejected
+    def test_full_path_with_allowed_basename_passes(self):
+        """Full paths to allowed basenames should pass — enables nvm, pyenv, etc."""
+        _validate_command("/usr/bin/node")  # basename 'node' is in allowlist
 
-    def test_disallowed_full_path_raises(self):
-        """Full path whose basename is not allowed must raise ValueError."""
-        with pytest.raises(ValueError):
-            _validate_command("/usr/bin/bash")
+    def test_full_path_with_allowed_basename_bash(self):
+        """Full path to bash should pass — bash is now in DEFAULT_ALLOWED_COMMANDS."""
+        _validate_command("/usr/bin/bash")  # bash is allowed, basename matches
 
     def test_env_override_allows_custom_command(self, monkeypatch):
         """MULTI_MCP_ALLOWED_COMMANDS env var overrides the default allowlist."""

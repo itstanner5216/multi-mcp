@@ -56,11 +56,12 @@ class TestPipelineDisabled:
         assert len(tools) == 2
 
     @pytest.mark.asyncio
-    async def test_skips_disconnected_tools(self):
+    async def test_includes_cached_disconnected_tools(self):
+        """Cached/disconnected tools (client=None) are included — they connect on demand."""
         config = RetrievalConfig(enabled=False)
         registry = {
             "github__get_me": _make_mapping("github", _make_tool("get_me")),
-            "broken__tool": _make_disconnected_mapping("broken", _make_tool("tool")),
+            "cached__tool": _make_disconnected_mapping("cached", _make_tool("tool")),
         }
         pipeline = RetrievalPipeline(
             retriever=PassthroughRetriever(),
@@ -70,8 +71,9 @@ class TestPipelineDisabled:
             tool_registry=registry,
         )
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 1
-        assert tools[0].name == "get_me"
+        assert len(tools) == 2  # Both connected and cached/disconnected
+        tool_names = {t.name for t in tools}
+        assert tool_names == {"get_me", "tool"}
 
     @pytest.mark.asyncio
     async def test_returns_tool_objects(self):
@@ -154,14 +156,15 @@ class TestPipelineEnabled:
         assert len(tools) == 2
 
     @pytest.mark.asyncio
-    async def test_enabled_skips_disconnected_anchors(self):
+    async def test_enabled_includes_disconnected_anchors(self):
+        """Disconnected anchor tools are still visible — they connect on demand."""
         config = RetrievalConfig(
             enabled=True,
-            anchor_tools=["github__get_me", "broken__tool"],
+            anchor_tools=["github__get_me", "cached__tool"],
         )
         registry = {
             "github__get_me": _make_mapping("github", _make_tool("get_me")),
-            "broken__tool": _make_disconnected_mapping("broken", _make_tool("tool")),
+            "cached__tool": _make_disconnected_mapping("cached", _make_tool("tool")),
         }
         pipeline = RetrievalPipeline(
             retriever=PassthroughRetriever(),
@@ -171,8 +174,9 @@ class TestPipelineEnabled:
             tool_registry=registry,
         )
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 1
-        assert tools[0].name == "get_me"
+        assert len(tools) == 2  # Both connected and cached/disconnected anchors
+        tool_names = {t.name for t in tools}
+        assert tool_names == {"get_me", "tool"}
 
     @pytest.mark.asyncio
     async def test_enabled_skips_missing_registry_keys(self):
