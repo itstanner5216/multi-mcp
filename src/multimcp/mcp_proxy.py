@@ -113,7 +113,7 @@ class MCPProxyServer(server.Server):
 
         # Validate name doesn't contain separator
         if "__" in name:
-                    raise ValueError(f"Server name '{name}' cannot contain '__' separator")
+            raise ValueError(f"Server name '{name}' cannot contain '__' separator")
 
         self.logger.info(f"try initialize client {name}: {client}")
         result = await client.initialize()
@@ -293,9 +293,9 @@ class MCPProxyServer(server.Server):
                     original_name, arguments
                 )
 
-                # Log successful tool invocation
+                # Log successful tool invocation (use original name for cross-referencing)
                 self.audit_logger.log_tool_call(
-                    tool_name=tool_name,
+                    tool_name=original_name,
                     server_name=tool_item.server_name,
                     arguments=arguments,
                 )
@@ -309,9 +309,9 @@ class MCPProxyServer(server.Server):
                 error_msg = str(e)
                 self.logger.error(f"❌ Failed to call tool '{tool_name}': {e}")
 
-                # Log tool failure
+                # Log tool failure (use original name for cross-referencing)
                 self.audit_logger.log_tool_failure(
-                    tool_name=tool_name,
+                    tool_name=original_name,
                     server_name=tool_item.server_name,
                     arguments=arguments,
                     error=error_msg,
