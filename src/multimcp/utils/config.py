@@ -2,9 +2,6 @@
 Configuration for audit logging.
 """
 
-from typing import Optional
-
-
 class AuditConfig:
     """Configuration for audit logging."""
 

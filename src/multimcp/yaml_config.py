@@ -60,13 +60,24 @@ def load_config(path: Path) -> MultiMCPConfig:
 
 
 def save_config(config: MultiMCPConfig, path: Path) -> None:
-    """Save config to YAML file, creating parent dirs as needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        yaml.dump(
-            config.model_dump(exclude_none=False),
-            f,
-            default_flow_style=False,
-            sort_keys=False,
-            allow_unicode=True,
-        )
+    """Save config to YAML file, creating parent dirs as needed.
+
+    Logs and re-raises on write error so callers can decide how to handle it.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        logger.error(f"❌ Failed to create config directory {path.parent}: {e}")
+        raise
+    try:
+        with open(path, "w") as f:
+            yaml.dump(
+                config.model_dump(exclude_none=False),
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                allow_unicode=True,
+            )
+    except OSError as e:
+        logger.error(f"❌ Failed to write config to {path}: {e}")
+        raise

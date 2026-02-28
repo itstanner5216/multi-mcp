@@ -58,7 +58,7 @@ class MCPTriggerManager:
                     await self.client_manager.get_or_create_client(server_name)
                     enabled_servers.append(server_name)
                     self.logger.info(f"✅ Server '{server_name}' enabled successfully")
-                except (ConnectionError, TimeoutError, OSError, ValueError, RuntimeError) as e:
+                except Exception as e:
                     self.logger.error(
                         f"❌ Failed to enable server '{server_name}': {e}"
                     )

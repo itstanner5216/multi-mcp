@@ -52,3 +52,39 @@ def test_save_and_reload_config(tmp_path):
 def test_load_missing_file_returns_empty_config():
     config = load_config(Path("/tmp/does_not_exist_multi_mcp.yaml"))
     assert config.servers == {}
+
+
+def test_save_config_raises_on_write_error(tmp_path):
+    """save_config must raise OSError (not swallow it) when file cannot be written.
+
+    Callers should catch OSError to avoid crashing startup on disk/perms failures.
+    """
+    from unittest.mock import patch, mock_open
+    import builtins
+
+    config = MultiMCPConfig()
+    path = tmp_path / "config.yaml"
+
+    original_open = builtins.open
+    def _raise_on_write(file, mode="r", *args, **kwargs):
+        if "w" in str(mode):
+            raise OSError("disk full")
+        return original_open(file, mode, *args, **kwargs)
+
+    with patch("builtins.open", side_effect=_raise_on_write):
+        with pytest.raises(OSError, match="disk full"):
+            save_config(config, path)
+
+
+def test_save_config_logs_and_raises_on_mkdir_error(tmp_path):
+    """save_config must raise OSError when the parent directory cannot be created."""
+    from unittest.mock import patch
+    from pathlib import Path
+
+    config = MultiMCPConfig()
+    # Use a path under a non-existent root that can't be created
+    path = tmp_path / "config.yaml"
+
+    with patch("pathlib.Path.mkdir", side_effect=OSError("permission denied")):
+        with pytest.raises(OSError, match="permission denied"):
+            save_config(config, path)

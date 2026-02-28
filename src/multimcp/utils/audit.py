@@ -30,6 +30,10 @@ def _sanitize_arguments(args):
     """Recursively redact sensitive values from arguments dict."""
     if args is None:
         return None
+    if isinstance(args, tuple):
+        return tuple(_sanitize_arguments(item) for item in args)
+    if isinstance(args, (set, frozenset)):
+        return type(args)(_sanitize_arguments(item) for item in args)
     if not isinstance(args, dict):
         if isinstance(args, list):
             return [_sanitize_arguments(item) for item in args]
@@ -38,10 +42,8 @@ def _sanitize_arguments(args):
     for key, value in args.items():
         if _SENSITIVE_KEYS.search(key):
             sanitized[key] = _REDACTED
-        elif isinstance(value, dict):
+        elif isinstance(value, (dict, list, tuple, set, frozenset)):
             sanitized[key] = _sanitize_arguments(value)
-        elif isinstance(value, list):
-            sanitized[key] = [_sanitize_arguments(item) for item in value]
         else:
             sanitized[key] = value
     return sanitized
@@ -159,9 +161,21 @@ class AuditLogger:
 
     def _write_entry(self, entry: Dict[str, Any]) -> None:
         """Write a JSONL entry to the audit log."""
-        json_line = json.dumps(entry, separators=(",", ":"), default=str)
+        try:
+            json_line = json.dumps(entry, separators=(",", ":"), default=str)
+        except Exception:
+            # Fallback for pathological objects where str() itself raises
+            json_line = json.dumps({
+                "timestamp": entry.get("timestamp", "unknown"),
+                "event_type": entry.get("event_type", "unknown"),
+                "tool_name": entry.get("tool_name", "unknown"),
+                "server_name": entry.get("server_name", "unknown"),
+                "status": entry.get("status", "unknown"),
+                "error": "audit entry serialization failed",
+            })
         logger.bind(audit=True).info(json_line)
 
     def close(self) -> None:
         """Remove the audit log sink from loguru."""
-        logger.remove(self._sink_id)
+        if hasattr(self, "_sink_id"):
+            logger.remove(self._sink_id)
