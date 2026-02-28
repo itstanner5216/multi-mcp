@@ -329,7 +329,7 @@ class TestMcpToolsParity:
     @pytest.mark.asyncio
     async def test_get_filtered_tools_excludes_tools_not_in_registry(self):
         """Only tools in tool_to_server appear in get_filtered_tools."""
-        proxy, cm = _make_proxy_with_tools("srv", ["visible_tool"])
+        proxy, cm = _make_proxy_with_tools("srv", ["visible_tool"], connected=True)
 
         filtered = proxy.get_filtered_tools()
         assert "invisible_tool" not in filtered.get("srv", [])
@@ -345,12 +345,12 @@ class TestMcpToolsParity:
         for t in ["tool_a", "tool_b"]:
             key = proxy._make_key("server_one", t)
             proxy.tool_to_server[key] = ToolMapping(
-                server_name="server_one", client=None, tool=_make_tool(key)
+                server_name="server_one", client=object(), tool=_make_tool(key)
             )
         for t in ["tool_x"]:
             key = proxy._make_key("server_two", t)
             proxy.tool_to_server[key] = ToolMapping(
-                server_name="server_two", client=None, tool=_make_tool(key)
+                server_name="server_two", client=object(), tool=_make_tool(key)
             )
 
         filtered = proxy.get_filtered_tools()
@@ -360,7 +360,7 @@ class TestMcpToolsParity:
     @pytest.mark.asyncio
     async def test_mcp_tools_endpoint_returns_same_data(self):
         """MultiMCP.handle_mcp_tools uses get_filtered_tools for its response."""
-        proxy, cm = _make_proxy_with_tools("srv", ["my_tool"])
+        proxy, cm = _make_proxy_with_tools("srv", ["my_tool"], connected=True)
         app = MultiMCP(transport="sse", host="127.0.0.1", port=18085)
         app.proxy = proxy
 
