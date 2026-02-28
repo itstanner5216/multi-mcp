@@ -1,4 +1,5 @@
 """Tests for security validation: env vars, command allowlist, SSRF protection."""
+import os
 import pytest
 import unittest.mock as mock
 from src.multimcp.mcp_client import _filter_env, _validate_command, _validate_url, PROTECTED_ENV_VARS
@@ -75,34 +76,34 @@ class TestCommandValidationSecurity:
         with pytest.raises(ValueError, match="not in allowed"):
             _validate_command("malicious_binary")
 
-    def test_rejects_path_traversal(self):
-        """Commands with path separators should be rejected — prevents trojanized binaries."""
-        with pytest.raises(ValueError):
-            _validate_command("/tmp/node")
-        with pytest.raises(ValueError):
-            _validate_command("../node")
-        with pytest.raises(ValueError):
-            _validate_command("/malicious/path/node")
-        with pytest.raises(ValueError):
-            _validate_command("./local/node")
+    def test_allows_full_path_to_known_command(self):
+        """Full paths to known commands should pass — basename is in allowlist."""
+        # These all have basenames in the allowed list
+        _validate_command("/tmp/node")  # basename 'node' is allowed
+        _validate_command("/usr/bin/npx")  # basename 'npx' is allowed
+        _validate_command("/home/user/.nvm/versions/node/v24/bin/npx")  # real-world nvm path
+        _validate_command("../node")  # basename 'node' is allowed
+        _validate_command("./local/python")  # basename 'python' is allowed
 
-    def test_rejects_relative_path(self):
-        """Relative paths should be rejected."""
+    def test_rejects_relative_unknown_command(self):
+        """Relative paths to unknown commands should be rejected."""
         with pytest.raises(ValueError):
-            _validate_command("subdir/node")
+            _validate_command("subdir/evil_binary")
 
-    def test_validate_command_rejects_path_separators(self):
-        """_validate_command raises ValueError for any command containing path separators."""
-        with pytest.raises(ValueError, match="path separators"):
+    def test_allows_full_path_to_allowed_basename(self):
+        """Full paths with allowed basenames pass even with path separators."""
+        _validate_command("/usr/bin/python")  # basename 'python' is allowed
+        _validate_command("/usr/local/bin/node")  # basename 'node' is allowed
+
+    def test_rejects_full_path_to_unknown_nonexistent_command(self):
+        """Full paths to unknown basenames that don't exist on disk are rejected."""
+        with pytest.raises(ValueError, match="not in allowed commands"):
             _validate_command("/tmp/evil_binary")
 
-        with pytest.raises(ValueError, match="path separators"):
-            _validate_command("../relative/node")
+        with pytest.raises(ValueError, match="not in allowed commands"):
+            _validate_command("/nonexistent/path/to/malware")
 
-        with pytest.raises(ValueError, match="path separators"):
-            _validate_command("/usr/bin/python")
-
-    def test_discover_stdio_validate_command_is_called(self):
+    def test_discover_stdio_calls_validate_command(self):
         """Verify _validate_command is invoked in the _discover_stdio code path.
 
         Uses unittest.mock.patch to intercept the _validate_command call made
@@ -113,10 +114,10 @@ class TestCommandValidationSecurity:
         from src.multimcp.mcp_client import MCPClientManager
 
         manager = MCPClientManager()
-        server_dict = {"command": "/malicious/path/node", "args": [], "env": {}}
+        server_dict = {"command": "/some/path/node", "args": [], "env": {}}
 
-        # Patch _validate_command to capture the call and raise as expected
-        with patch("src.multimcp.mcp_client._validate_command", side_effect=ValueError("path separators")) as mock_validate:
+        # Patch _validate_command to verify it's called
+        with patch("src.multimcp.mcp_client._validate_command") as mock_validate:
             server_config = MagicMock()
             server_config.always_on = False
 
@@ -124,10 +125,60 @@ class TestCommandValidationSecurity:
                 result = await manager._discover_stdio("test_server", server_dict, server_config)
                 return result
 
-            # _discover_stdio catches exceptions and returns []
-            result = asyncio.run(run())
-            assert result == [], "Expected empty list when command validation raises"
-            mock_validate.assert_called_once_with("/malicious/path/node")
+            asyncio.run(run())
+            mock_validate.assert_called_once_with("/some/path/node")
+
+    def test_bash_and_sh_are_allowed(self):
+        """bash and sh should be in DEFAULT_ALLOWED_COMMANDS for wrapper scripts."""
+        _validate_command("bash")
+        _validate_command("sh")
+        _validate_command("/bin/bash")
+        _validate_command("/bin/sh")
+        _validate_command("/usr/bin/env bash"  .split()[0])  # just 'bash'
+
+    def test_full_path_executable_file_allowed(self):
+        """Full path to an executable file the user configured should pass,
+        even if its basename isn't in the standard allowlist."""
+        import tempfile
+        import stat
+        with tempfile.NamedTemporaryFile(suffix="_server.sh", delete=False) as f:
+            f.write(b"#!/bin/bash\necho hello")
+            f.flush()
+            os.chmod(f.name, stat.S_IRWXU)
+            try:
+                _validate_command(f.name)  # Should pass — exists and is executable
+            finally:
+                os.unlink(f.name)
+
+    def test_full_path_nonexecutable_file_rejected(self):
+        """Full path to a non-executable file should be rejected."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix="_notexec", delete=False) as f:
+            f.write(b"not executable")
+            f.flush()
+            os.chmod(f.name, 0o644)  # Not executable
+            try:
+                with pytest.raises(ValueError):
+                    _validate_command(f.name)
+            finally:
+                os.unlink(f.name)
+
+    def test_error_message_includes_env_var_hint(self):
+        """Error message should tell user how to extend the allowlist."""
+        with pytest.raises(ValueError, match="MULTI_MCP_ALLOWED_COMMANDS"):
+            _validate_command("custom_tool")
+
+    def test_env_var_overrides_allowlist(self):
+        """MULTI_MCP_ALLOWED_COMMANDS env var replaces (not extends) the default list."""
+        os.environ["MULTI_MCP_ALLOWED_COMMANDS"] = "custom_tool,another_tool"
+        try:
+            _validate_command("custom_tool")
+            _validate_command("another_tool")
+            # Defaults should NOT work when env var is set (it replaces, not extends)
+            with pytest.raises(ValueError):
+                _validate_command("node")
+        finally:
+            del os.environ["MULTI_MCP_ALLOWED_COMMANDS"]
 
 
 import pytest

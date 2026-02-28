@@ -16,7 +16,7 @@ from src.utils.logger import get_logger
 
 
 # Default allowlist for command execution
-DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker"}
+DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker", "bash", "sh"}
 
 # Env vars that cannot be overridden by server config
 PROTECTED_ENV_VARS = {
@@ -61,17 +61,37 @@ def _get_allowed_commands() -> set:
 
 
 def _validate_command(command: str) -> None:
-    """Validate that the command is in the allowed list and has no path components."""
-    if os.sep in command or "/" in command or "\\" in command:
-        raise ValueError(
-            f"Command '{command}' contains path separators — only bare command names are allowed"
-        )
+    """Validate that the command is allowed to execute.
+
+    Security model:
+    - Bare command names (no path separators) must be in the allowed list.
+    - Full paths: the basename is checked against the allowed list first.
+      If the basename isn't recognized, the path must point to an existing
+      executable file. Full paths come from user-controlled config files
+      (YAML/JSON), so we trust explicit paths to real executables.
+    """
     cmd_name = os.path.basename(command)
     allowed = _get_allowed_commands()
-    if cmd_name not in allowed:
+
+    # Fast path: basename matches allowed list (works for both bare and full paths)
+    if cmd_name in allowed:
+        return
+
+    # Full path to an executable file the user explicitly configured
+    if (os.sep in command or "/" in command) and os.path.isfile(command) and os.access(command, os.X_OK):
+        return
+
+    # Reject with helpful message
+    if os.sep in command or "/" in command:
         raise ValueError(
-            f"Command '{cmd_name}' is not in allowed commands: {allowed}"
+            f"Command '{command}' (basename '{cmd_name}') is not in allowed commands "
+            f"{allowed} and is not an executable file on disk. "
+            f"Set MULTI_MCP_ALLOWED_COMMANDS env var to extend the allowlist."
         )
+    raise ValueError(
+        f"Command '{cmd_name}' is not in allowed commands: {allowed}. "
+        f"Set MULTI_MCP_ALLOWED_COMMANDS env var to extend the allowlist."
+    )
 
 
 async def _validate_url(url: str) -> None:
