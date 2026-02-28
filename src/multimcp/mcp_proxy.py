@@ -187,10 +187,17 @@ class MCPProxyServer(server.Server):
                 k: v for k, v in self.prompt_to_server.items() if v.client != client
             }
             self.resource_to_server = {
-                k: v for k, v in self.resource_to_server.items() if v.client != client
+                k: v for k, v in self.resource_to_server.items() if v != client
             }
 
             self.logger.info(f"✅ Client '{name}' fully unregistered.")
+
+            # Clean up client manager runtime state for this server
+            if self.client_manager:
+                self.client_manager.tool_filters.pop(name, None)
+                self.client_manager.idle_timeouts.pop(name, None)
+                self.client_manager.last_used.pop(name, None)
+                self.client_manager._creation_locks.pop(name, None)
 
             # Send notifications for removed capabilities
             if had_tools:
@@ -207,6 +214,21 @@ class MCPProxyServer(server.Server):
         and updated dynamically when servers are added/removed."""
         all_tools = [mapping.tool for mapping in self.tool_to_server.values() if mapping.client is not None]
         return types.ServerResult(tools=all_tools)
+
+    def get_filtered_tools(self) -> dict[str, list[str]]:
+        """Return the filtered tool list grouped by server (same view as MCP tools/list).
+
+        Uses the proxy's tool_to_server registry which already has filters applied.
+        Includes both connected and lazy (pending) servers that have cached tool info.
+        """
+        tools_by_server: dict[str, list[str]] = {}
+        for key, mapping in self.tool_to_server.items():
+            server = mapping.server_name
+            _, tool_name = self._split_key(key)
+            if server not in tools_by_server:
+                tools_by_server[server] = []
+            tools_by_server[server].append(tool_name)
+        return tools_by_server
 
     async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
         """Invoke a tool on the correct backend MCP server."""
@@ -270,6 +292,10 @@ class MCPProxyServer(server.Server):
                     server_name=tool_item.server_name,
                     arguments=arguments,
                 )
+
+                # Refresh idle timer so active servers aren't evicted
+                if self.client_manager:
+                    self.client_manager.record_usage(tool_item.server_name)
 
                 return types.ServerResult(result)
             except Exception as e:
@@ -552,9 +578,11 @@ class MCPProxyServer(server.Server):
         if filter_config is None:
             return True
         deny = filter_config.get("deny", [])
-        if tool_name in deny:
+        if "*" in deny or tool_name in deny:
             return False
         allow = filter_config.get("allow", ["*"])
+        if not allow:   # Empty allow list = deny all
+            return False
         return "*" in allow or tool_name in allow
 
     @staticmethod

@@ -34,6 +34,7 @@ class MCPSettings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
+    debug: bool = False  # Expose exception details in error responses (env: MULTI_MCP_DEBUG)
     config: Optional[str] = None
     api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
 
@@ -88,6 +89,9 @@ class MultiMCP:
                 self.client_manager.tool_filters[server_name] = {
                     "allow": list(enabled), "deny": []
                 }
+            else:
+                # All tools disabled — explicit deny-all filter
+                self.client_manager.tool_filters[server_name] = {"allow": [], "deny": ["*"]}
             self.client_manager.idle_timeouts[server_name] = (
                 server_config.idle_timeout_minutes * 60
             )
@@ -357,6 +361,18 @@ class MultiMCP:
             # Pre-populate tool list from YAML cache so tools are visible immediately
             self.proxy.load_tools_from_yaml(yaml_config)
 
+            # Register watchdog callback so proxy tool mappings are refreshed after reconnect
+            async def _on_server_reconnected(server_name: str, client) -> None:
+                """Called by watchdog after reconnect — refresh proxy tool mappings."""
+                try:
+                    await self.proxy.initialize_single_client(server_name, client)
+                    await self.proxy._send_tools_list_changed()
+                    self.logger.info(f"✅ Proxy updated after watchdog reconnect of '{server_name}'")
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Failed to update proxy after reconnect of '{server_name}': {e}")
+
+            self.client_manager.on_server_reconnected = _on_server_reconnected
+
             # Connect always_on servers in background (don't block startup)
             self._track_task(_connect_always_on(), "connect-always-on")
 
@@ -490,11 +506,21 @@ class MultiMCP:
         async def auth_mcp_control(request):
             return await self._auth_wrapper(self.handle_mcp_control, request)
 
+        async def auth_post_message(scope, receive, send):
+            """Auth-protected wrapper around sse.handle_post_message."""
+            if scope["type"] == "http":
+                request = Request(scope, receive)
+                auth_error = self._check_auth(request)
+                if auth_error:
+                    await auth_error(scope, receive, send)
+                    return
+            await sse.handle_post_message(scope, receive, send)
+
         starlette_app = Starlette(
             debug=self.settings.sse_server_debug,
             routes=[
                 Route("/sse", endpoint=handle_sse),
-                Mount("/messages/", app=sse.handle_post_message),
+                Mount("/messages/", app=auth_post_message),
                 # Dynamic endpoints with auth
                 Route(
                     "/mcp_servers",
@@ -570,7 +596,18 @@ class MultiMCP:
                     f"⚠️ Eager connect failed for {added}, will connect on first use: {connect_err}"
                 )
 
-            return JSONResponse({"message": f"Added {added}"})
+                return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
+
+            except ValueError as e:
+                # Security validation failure (command not allowed, SSRF attempt, etc.)
+                self.logger.warning(f"⚠️ Rejected /mcp_servers POST: {e}")
+                return JSONResponse({"error": str(e)}, status_code=403)
+            except Exception as e:
+                self.logger.error(f"❌ Error adding MCP servers: {e}")
+                return JSONResponse(
+                    {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                    status_code=500,
+                )
 
         elif method == "DELETE":
             name = request.path_params.get("name")
@@ -591,28 +628,29 @@ class MultiMCP:
                     {"message": f"Client '{name}' removed successfully"}
                 )
             except Exception as e:
-                return JSONResponse({"error": str(e)}, status_code=500)
+                self.logger.error(f"❌ Error removing MCP server '{name}': {e}")
+                return JSONResponse(
+                    {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                    status_code=500,
+                )
 
         return JSONResponse({"error": f"Unsupported method: {method}"}, status_code=405)
 
     async def handle_mcp_tools(self, request: Request) -> JSONResponse:
-        """Return the list of currently available tools grouped by server."""
+        """Return the list of available tools grouped by server (same view as MCP tools/list)."""
         try:
             if not self.proxy:
                 return JSONResponse({"error": "Proxy not initialized"}, status_code=500)
 
-            tools_by_server = {}
-            for server_name, client in self.proxy.client_manager.clients.items():
-                try:
-                    tools = await client.list_tools()
-                    tools_by_server[server_name] = [tool.name for tool in tools.tools]
-                except Exception as e:
-                    tools_by_server[server_name] = f"❌ Error: {str(e)}"
-
+            tools_by_server = self.proxy.get_filtered_tools()
             return JSONResponse({"tools": tools_by_server})
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_mcp_tools: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )
 
     async def handle_health(self, request: Request) -> JSONResponse:
         """Return health status with connected and pending server counts."""
@@ -638,7 +676,11 @@ class MultiMCP:
             )
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_health: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )
 
     async def handle_mcp_control(self, request: Request) -> JSONResponse:
         """Handle POST /mcp_control for manual server enable/disable."""
@@ -686,8 +728,10 @@ class MultiMCP:
                         {"message": f"Server '{server_name}' enabled successfully"}
                     )
                 except Exception as e:
+                    self.logger.error(f"❌ Failed to enable server '{server_name}': {e}")
                     return JSONResponse(
-                        {"error": f"Failed to enable server: {str(e)}"}, status_code=500
+                        {"error": "Failed to enable server", "detail": str(e) if self.settings.debug else None},
+                        status_code=500,
                     )
 
             elif action == "disable":
@@ -707,8 +751,9 @@ class MultiMCP:
                         {"message": f"Server '{server_name}' disabled successfully"}
                     )
                 except Exception as e:
+                    self.logger.error(f"❌ Failed to disable server '{server_name}': {e}")
                     return JSONResponse(
-                        {"error": f"Failed to disable server: {str(e)}"},
+                        {"error": "Failed to disable server", "detail": str(e) if self.settings.debug else None},
                         status_code=500,
                     )
 
@@ -719,4 +764,8 @@ class MultiMCP:
                 )
 
         except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+            self.logger.error(f"❌ Error in handle_mcp_control: {e}")
+            return JSONResponse(
+                {"error": "Internal server error", "detail": str(e) if self.settings.debug else None},
+                status_code=500,
+            )

@@ -1,8 +1,11 @@
 from contextlib import AsyncExitStack
-from typing import Awaitable, Callable, Dict, Optional, Set
+from typing import Any, Awaitable, Callable, Dict, Optional, Set
 import os
 import asyncio
 import time
+import ipaddress
+import socket
+import urllib.parse
 
 
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -10,6 +13,79 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client
 from src.utils.logger import get_logger
+
+
+# Default allowlist for command execution
+DEFAULT_ALLOWED_COMMANDS = {"node", "npx", "uvx", "python", "python3", "uv", "docker"}
+
+# Env vars that cannot be overridden by server config
+PROTECTED_ENV_VARS = {"PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "HOME", "USER", "PYTHONPATH", "PYTHONHOME"}
+
+# Private/internal IP ranges to block for SSRF
+_PRIVATE_RANGES = [
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("169.254.0.0/16"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+]
+
+
+def _get_allowed_commands() -> set:
+    """Return the set of allowed commands, from env var or default."""
+    env_val = os.environ.get("MULTI_MCP_ALLOWED_COMMANDS", "")
+    if env_val.strip():
+        return {cmd.strip() for cmd in env_val.split(",") if cmd.strip()}
+    return DEFAULT_ALLOWED_COMMANDS
+
+
+def _validate_command(command: str) -> None:
+    """Raise ValueError if command is not in the allowed list."""
+    # Extract just the basename in case a full path is provided
+    cmd_name = os.path.basename(command)
+    allowed = _get_allowed_commands()
+    if cmd_name not in allowed:
+        raise ValueError(
+            f"Command '{command}' is not in the allowed commands list. "
+            f"Allowed: {sorted(allowed)}. "
+            f"Set MULTI_MCP_ALLOWED_COMMANDS to override."
+        )
+
+
+def _validate_url(url: str) -> None:
+    """Raise ValueError if URL is not safe (SSRF check)."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed. Only http/https permitted.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("URL has no hostname.")
+
+    # Resolve hostname to IP address(es) to prevent DNS rebinding
+    try:
+        addrinfos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as e:
+        raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
+
+    for addrinfo in addrinfos:
+        ip_str = addrinfo[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        for private_range in _PRIVATE_RANGES:
+            if ip in private_range:
+                raise ValueError(
+                    f"URL '{url}' resolves to private/internal IP '{ip}' which is not allowed."
+                )
+
+
+def _filter_env(env: dict) -> dict:
+    """Remove protected env vars from the server-provided env dict."""
+    return {k: v for k, v in env.items() if k not in PROTECTED_ENV_VARS}
 
 
 class MCPClientManager:
@@ -36,6 +112,14 @@ class MCPClientManager:
         self.idle_timeouts: Dict[str, float] = {}   # server_name -> seconds
         self.last_used: Dict[str, float] = {}        # server_name -> monotonic timestamp
         self._on_server_disconnected = on_server_disconnected
+        self._creation_locks: Dict[str, asyncio.Lock] = {}
+        self.on_server_reconnected: Optional[Any] = None  # async callable(server_name, client)
+
+    def _get_creation_lock(self, name: str) -> asyncio.Lock:
+        """Get or create a per-server creation lock (lazily initialized)."""
+        if name not in self._creation_locks:
+            self._creation_locks[name] = asyncio.Lock()
+        return self._creation_locks[name]
 
     def _parse_tool_filter(self, config: dict) -> Optional[dict]:
         """Normalize the 'tools' field from a server config into {allow, deny} format.
@@ -73,6 +157,7 @@ class MCPClientManager:
     async def get_or_create_client(self, name: str) -> ClientSession:
         """
         Get an existing client or create it from pending configs on first access.
+        Uses a per-server lock to prevent race conditions on concurrent first-access.
 
         Args:
             name (str): Server name
@@ -83,27 +168,33 @@ class MCPClientManager:
         Raises:
             KeyError: If server is not found in clients or pending_configs
         """
-        # Return existing client if already connected
+        # Fast path: already connected (no lock needed)
         if name in self.clients:
             self.record_usage(name)
             return self.clients[name]
 
-        # Create from pending config if available
-        if name in self.pending_configs:
-            config = self.pending_configs.pop(name)
-            async with self._connection_semaphore:
-                try:
-                    await asyncio.wait_for(
-                        self._create_single_client(name, config),
-                        timeout=self._connection_timeout,
-                    )
-                except asyncio.TimeoutError:
-                    self.logger.error(f"❌ Connection timeout for {name}")
-                    raise
-            self.record_usage(name)
-            return self.clients[name]
+        # Slow path: acquire per-server lock before creating
+        async with self._get_creation_lock(name):
+            # Re-check after acquiring lock (another coroutine may have connected)
+            if name in self.clients:
+                self.record_usage(name)
+                return self.clients[name]
 
-        raise KeyError(f"Unknown server: {name}")
+            if name in self.pending_configs:
+                config = self.pending_configs.pop(name)
+                async with self._connection_semaphore:
+                    try:
+                        await asyncio.wait_for(
+                            self._create_single_client(name, config),
+                            timeout=self._connection_timeout,
+                        )
+                    except asyncio.TimeoutError:
+                        self.logger.error(f"❌ Connection timeout for {name}")
+                        raise
+                self.record_usage(name)
+                return self.clients[name]
+
+            raise KeyError(f"Unknown server: {name}")
 
     async def discover_all(
         self, config: "MultiMCPConfig"
@@ -225,8 +316,9 @@ class MCPClientManager:
             command = server_dict.get("command")
             args = server_dict.get("args", [])
             env = server_dict.get("env", {})
+            safe_env = _filter_env(env)
             merged_env = os.environ.copy()
-            merged_env.update(env)
+            merged_env.update(safe_env)
 
             params = StdioServerParameters(command=command, args=args, env=merged_env)
             read, write = await server_stack.enter_async_context(stdio_client(params))
@@ -259,6 +351,48 @@ class MCPClientManager:
                 pass
             return []
 
+    async def _connect_url_server(
+        self,
+        name: str,
+        url: str,
+        env: dict,
+        server_stack: AsyncExitStack,
+        server_config: Optional[Any] = None,
+    ) -> ClientSession:
+        """Connect to a URL-based MCP server using the correct transport.
+
+        Respects server_config.type if set to 'sse' (skips Streamable HTTP).
+        Otherwise tries Streamable HTTP first, falls back to legacy SSE.
+
+        Uses a nested stack for the Streamable HTTP attempt so that a failed
+        attempt is cleaned up safely before falling through to SSE.
+        """
+        transport_type = getattr(server_config, 'type', None) if server_config else None
+
+        if transport_type != 'sse':
+            # Try Streamable HTTP in a temporary nested stack for safe fallback
+            fallback_stack = AsyncExitStack()
+            try:
+                await fallback_stack.__aenter__()
+                read, write, _ = await fallback_stack.enter_async_context(
+                    streamable_http_client(url)
+                )
+                client = await fallback_stack.enter_async_context(ClientSession(read, write))
+                # Success: absorb the nested stack into the main server_stack for proper cleanup
+                await server_stack.enter_async_context(fallback_stack)
+                self.logger.info(f"🌐 Connected to '{name}' via Streamable HTTP")
+                return client
+            except Exception as e:
+                await fallback_stack.aclose()
+                self.logger.debug(f"Streamable HTTP failed for '{name}', trying SSE: {e}")
+
+        # Use legacy SSE (fallback or explicit)
+        read, write = await server_stack.enter_async_context(sse_client(url=url))
+        client = await server_stack.enter_async_context(ClientSession(read, write))
+        mode = "explicit" if transport_type == 'sse' else "fallback"
+        self.logger.info(f"🌐 Connected to '{name}' via SSE ({mode})")
+        return client
+
     def record_usage(self, server_name: str) -> None:
         """Update last-used timestamp for a server."""
         self.last_used[server_name] = time.monotonic()
@@ -284,6 +418,9 @@ class MCPClientManager:
                     self.logger.warning(f"⚠️ Error closing stack for '{name}': {e}")
             if name in self.server_configs:
                 self.pending_configs[name] = self.server_configs[name]
+            # Clean up runtime state; keep tool_filters and idle_timeouts (config for reconnection)
+            self.last_used.pop(name, None)
+            self._creation_locks.pop(name, None)
             if self._on_server_disconnected:
                 try:
                     await self._on_server_disconnected(name)
@@ -315,23 +452,31 @@ class MCPClientManager:
                         url = server_config.get("url")
                         args = server_config.get("args", [])
                         env = server_config.get("env", {})
+                        safe_env = _filter_env(env)
                         merged_env = os.environ.copy()
-                        merged_env.update(env)
+                        merged_env.update(safe_env)
 
                         if command:
                             params = StdioServerParameters(command=command, args=args, env=merged_env)
                             read, write = await server_stack.enter_async_context(stdio_client(params))
+                            client = await server_stack.enter_async_context(ClientSession(read, write))
                         elif url:
-                            read, write = await server_stack.enter_async_context(sse_client(url=url))
+                            client = await self._connect_url_server(name, url, env, server_stack)
                         else:
                             await server_stack.aclose()
                             continue
 
-                        client = await server_stack.enter_async_context(ClientSession(read, write))
                         await client.initialize()
                         self.clients[name] = client
                         self.server_stacks[name] = server_stack
                         self.logger.info(f"✅ Reconnected always-on server '{name}'")
+
+                        # Notify proxy so it can update tool mappings
+                        if self.on_server_reconnected:
+                            try:
+                                await self.on_server_reconnected(name, client)
+                            except Exception as cb_err:
+                                self.logger.warning(f"⚠️ on_server_reconnected callback failed for '{name}': {cb_err}")
                     except Exception as e:
                         self.logger.error(f"❌ Failed to reconnect '{name}': {e}")
                         try:
@@ -357,10 +502,12 @@ class MCPClientManager:
             url = server.get("url")
             args = server.get("args", [])
             env = server.get("env", {})
-            merged_env = os.environ.copy()
-            merged_env.update(env)
 
             if command:
+                _validate_command(command)
+                safe_env = _filter_env(env)
+                merged_env = os.environ.copy()
+                merged_env.update(safe_env)
                 self.logger.info(f"🔌 Creating stdio client for {name}")
                 params = StdioServerParameters(
                     command=command,
@@ -373,11 +520,8 @@ class MCPClientManager:
                 )
 
             elif url:
-                self.logger.info(f"🌐 Creating SSE client for {name}")
-                read, write = await server_stack.enter_async_context(sse_client(url=url))
-                session = await server_stack.enter_async_context(
-                    ClientSession(read, write)
-                )
+                _validate_url(url)
+                session = await self._connect_url_server(name, url, env, server_stack)
 
             else:
                 self.logger.warning(f"⚠️ Skipping {name}: No command or URL provided.")
