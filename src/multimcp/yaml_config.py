@@ -35,8 +35,14 @@ class RetrievalSettings(BaseModel):
     anchor_tools: list[str] = Field(default_factory=list)
 
 
+class ProfileConfig(BaseModel):
+    """Per-profile tool allow-list. Keys are server names, values are lists of allowed tool names."""
+    servers: dict[str, list[str]] = Field(default_factory=dict)
+
+
 class MultiMCPConfig(BaseModel):
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
+    profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
     """Extra file/directory paths to scan for MCP configs (in addition to auto-detected editors)."""
     exclude_sources: list[str] = Field(default_factory=list)

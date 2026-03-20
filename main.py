@@ -23,6 +23,10 @@ def parse_args():
     start.add_argument(
         "--log-level", choices=["DEBUG", "INFO", "WARNING", "ERROR"], default="INFO"
     )
+    start.add_argument(
+        "--profile", type=str, default=None,
+        help="Apply a named profile to filter tools (defined in servers.yaml profiles section)"
+    )
 
     # refresh
     refresh = sub.add_parser("refresh", help="Re-discover tools and update YAML")
@@ -50,6 +54,7 @@ if __name__ == "__main__":
             port=args.port,
             log_level=args.log_level,
             api_key=args.api_key,
+            profile=args.profile,
         )
         asyncio.run(server.run())
 

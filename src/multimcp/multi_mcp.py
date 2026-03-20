@@ -38,6 +38,7 @@ class MCPSettings(BaseSettings):
     debug: bool = False  # Expose exception details in error responses (env: MULTI_MCP_DEBUG)
     config: Optional[str] = None
     api_key: Optional[str] = None  # API key for authentication (env: MULTI_MCP_API_KEY)
+    profile: Optional[str] = None  # Named profile for tool filtering (env: MULTI_MCP_PROFILE)
 
     model_config = SettingsConfigDict(env_prefix="MULTI_MCP_")
 
@@ -52,6 +53,7 @@ class MultiMCP:
         # Safe under asyncio single-threaded model: add/discard are synchronous,
         # done callbacks fire between event loop iterations — no concurrent mutation.
         self._bg_tasks: set[asyncio.Task] = set()
+        self._yaml_config: Optional[MultiMCPConfig] = None
 
     def _track_task(self, coro, name: str) -> asyncio.Task:
         task = asyncio.create_task(coro, name=name)
@@ -103,6 +105,21 @@ class MultiMCP:
                 self.client_manager.always_on_servers.add(server_name)
 
         return config
+
+    def _resolve_profile(self, profile_name: str, yaml_config: MultiMCPConfig) -> dict[str, dict]:
+        """Convert a profile name into per-server tool filters (allow-list)."""
+        profile = yaml_config.profiles.get(profile_name)
+        if not profile:
+            self.logger.warning(f"⚠️ Profile '{profile_name}' not found in config")
+            return {}
+        filters = {}
+        for server_name, allowed_tools in profile.servers.items():
+            filters[server_name] = {"allow": list(allowed_tools), "deny": []}
+        # Servers NOT listed in profile get deny-all
+        for server_name in yaml_config.servers:
+            if server_name not in filters:
+                filters[server_name] = {"allow": [], "deny": ["*"]}
+        return filters
 
     async def _first_run_discovery(self, yaml_path: Path) -> MultiMCPConfig:
         """Connect to all servers from JSON/plugin config, discover tools, write YAML."""
@@ -414,6 +431,7 @@ class MultiMCP:
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
         yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+        self._yaml_config = yaml_config  # Store for profile resolution
         self._yaml_config_cache = yaml_config  # available to toggle_tool for schema lookup
 
         # Register ALL servers as pending — proxy starts instantly from YAML cache
@@ -424,6 +442,13 @@ class MultiMCP:
         for server_name, server_config in yaml_config.servers.items():
             server_dict = server_config.model_dump(exclude_none=True)
             self.client_manager.add_pending_server(server_name, server_dict)
+
+        # Apply CLI profile if specified (stdio transport gets it applied globally)
+        if self.settings.profile and self._yaml_config:
+            profile_filters = self._resolve_profile(self.settings.profile, self._yaml_config)
+            if profile_filters:
+                self.client_manager.tool_filters.update(profile_filters)
+                self.logger.info(f"🎭 Applied profile '{self.settings.profile}' for stdio session")
 
         # Register signal handlers for graceful shutdown
         loop = asyncio.get_running_loop()
@@ -625,12 +650,30 @@ class MultiMCP:
                 if auth_error:
                     await auth_error(scope, receive, send)
                     return
-                async with self._sse.connect_sse(scope, receive, send) as streams:
-                    await self._mcp.proxy.run(
-                        streams[0],
-                        streams[1],
-                        self._mcp.proxy.create_initialization_options(),
-                    )
+
+                # Profile-based filtering: overlay per-session tool filters.
+                # NOTE: save/restore is NOT concurrent-safe. Acceptable for single-user
+                # personal server; for multi-user deployments, use per-session filter copies.
+                profile_name = request.query_params.get("profile") or self._mcp.settings.profile
+                saved_filters = None
+                if profile_name and self._mcp._yaml_config:
+                    profile_filters = self._mcp._resolve_profile(profile_name, self._mcp._yaml_config)
+                    if profile_filters:
+                        saved_filters = dict(self._mcp.proxy.client_manager.tool_filters)
+                        self._mcp.proxy.client_manager.tool_filters.update(profile_filters)
+                        self._mcp.logger.info(f"🎭 Applied profile '{profile_name}' for SSE session")
+
+                try:
+                    async with self._sse.connect_sse(scope, receive, send) as streams:
+                        await self._mcp.proxy.run(
+                            streams[0],
+                            streams[1],
+                            self._mcp.proxy.create_initialization_options(),
+                        )
+                finally:
+                    if saved_filters is not None:
+                        self._mcp.proxy.client_manager.tool_filters = saved_filters
+                        self._mcp.logger.info(f"🎭 Restored global filters after profile session")
 
         handle_sse = _SSEHandler(self, sse)
 
