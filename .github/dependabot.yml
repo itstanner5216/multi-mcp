@@ -1,0 +1,78 @@
+# Dependabot configuration — bi-weekly dependency updates
+# Covers: Python (pip), Docker, and GitHub Actions ecosystems
+
+version: 2
+
+updates:
+  # ── Python dependencies (pyproject.toml / requirements.txt) ──────────────
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    # Run every other week by pairing with a day-of-week anchor.
+    # Dependabot does not natively support "bi-weekly", so we use weekly
+    # cadence and group all updates into a single PR to minimise noise.
+    open-pull-requests-limit: 5
+    groups:
+      python-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    reviewers:
+      - "itstanner5216"
+    ignore:
+      # Ignore major-version bumps automatically; review those manually
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # ── Docker base image ─────────────────────────────────────────────────────
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    groups:
+      docker-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    reviewers:
+      - "itstanner5216"
+
+  # ── GitHub Actions ────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "America/New_York"
+    open-pull-requests-limit: 3
+    groups:
+      actions-dependencies:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    reviewers:
+      - "itstanner5216"
