@@ -49,7 +49,7 @@ class JetBrainsAdapter(MCPConfigAdapter):
 
     tool_name = "jetbrains"
     display_name = "JetBrains IDEs"
-    config_format = "json"
+    config_format = "xml"
     supported_platforms = ["macos", "linux", "windows"]
 
     def _jetbrains_root(self) -> Optional[Path]:
