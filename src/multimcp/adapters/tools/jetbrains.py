@@ -54,15 +54,17 @@ class JetBrainsAdapter(MCPConfigAdapter):
 
     def _jetbrains_root(self) -> Optional[Path]:
         """Return the JetBrains config root directory for the current OS."""
-        if sys.platform == "darwin":
+        platform = _current_platform()
+        if platform == "macos":
             return Path.home() / "Library" / "Application Support" / "JetBrains"
-        if sys.platform == "win32":
+        elif platform == "windows":
             appdata = os.environ.get("APPDATA", "")
             if not appdata:
                 return None
             return Path(appdata) / "JetBrains"
-        # Linux / XDG
-        return Path.home() / ".config" / "JetBrains"
+        elif platform == "linux":
+            return Path.home() / ".config" / "JetBrains"
+        return None
 
     def config_path(self) -> Optional[Path]:
         """Return the JetBrains config root (not a single file).
