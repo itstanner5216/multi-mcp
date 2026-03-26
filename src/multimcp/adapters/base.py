@@ -19,7 +19,7 @@ class MCPConfigAdapter(ABC):
     tool_name: str
     #: Human-readable label, e.g. ``"Claude Desktop"``
     display_name: str
-    #: One of ``"json"``, ``"yaml"``, ``"toml"``, ``"json5"``
+    #: One of ``"json"``, ``"yaml"``, ``"toml"``, ``"json5"``, ``"xml"``
     config_format: str
     #: Platforms this adapter supports: subset of ``["macos", "linux", "windows"]``
     supported_platforms: list[str]

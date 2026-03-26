@@ -123,19 +123,6 @@ class WarpAdapter(MCPConfigAdapter):
             raise RuntimeError(f"{self.display_name}: unsupported platform")
         if self._is_dir_mode():
             path.mkdir(parents=True, exist_ok=True)
-            # Remove stale JSON files
-            expected_filenames = {f"{name}.json" for name in config.keys()}
-            try:
-                for json_file in path.glob("*.json"):
-                    if json_file.name not in expected_filenames:
-                        try:
-                            json_file.unlink()
-                            _logger.info(f"🧹 Removed stale config file: {json_file.name}")
-                        except OSError as exc:
-                            _logger.warning(f"⚠️ Could not remove stale file {json_file.name}: {exc}")
-            except OSError as exc:
-                _logger.warning(f"⚠️ Could not list config directory for cleanup: {exc}")
-            # Write current config files
             for name, server_data in config.items():
                 file_path = path / f"{name}.json"
                 with open(file_path, "w", encoding="utf-8") as fh:

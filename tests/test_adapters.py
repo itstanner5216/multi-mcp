@@ -43,7 +43,7 @@ class TestAdapterRegistry:
         expected_names = {
             "claude_desktop", "zed", "continue_dev", "cline", "gemini_cli",
             "openclaw", "warp", "jetbrains", "codex_cli", "codex_desktop",
-            "gptme", "raycast", "window_ai", "roo_cline", "windsurf", "cursor"
+            "gptme", "raycast", "antigravity", "roo_code", "opencode", "github_copilot"
         }
         assert adapter_names == expected_names
 
@@ -72,7 +72,7 @@ class TestAdapterRegistry:
         for adapter in list_adapters():
             assert isinstance(adapter.tool_name, str) and adapter.tool_name
             assert isinstance(adapter.display_name, str) and adapter.display_name
-            assert adapter.config_format in {"json", "yaml", "toml", "json5"}
+            assert adapter.config_format in {"json", "yaml", "toml", "json5", "xml"}
             assert isinstance(adapter.supported_platforms, list)
             assert len(adapter.supported_platforms) >= 1
 

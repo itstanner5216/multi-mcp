@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from src.multimcp.adapters.base import MCPConfigAdapter
+from src.multimcp.adapters.base import MCPConfigAdapter, _current_platform
 
 
 class JetBrainsAdapter(MCPConfigAdapter):
