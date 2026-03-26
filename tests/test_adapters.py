@@ -482,7 +482,7 @@ class TestJetBrainsAdapter:
         adapter = self._adapter()
         with patch.object(adapter, "_jetbrains_root", return_value=tmp_path / "JetBrains"):
             result = adapter.discover_servers()
-        assert isinstance(result, dict)
+        assert result == {}
 
 
 # ---------------------------------------------------------------------------
