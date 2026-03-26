@@ -86,9 +86,11 @@ class TestClaudeDesktopAdapter:
 
     def test_config_path_macos(self) -> None:
         with patch("sys.platform", "darwin"):
-            # re-import to get fresh platform check inside config_path
-            from src.multimcp.adapters.tools.claude_desktop import ClaudeDesktopAdapter
-            adapter = ClaudeDesktopAdapter()
+            import importlib
+            from src.multimcp.adapters.tools import claude_desktop
+
+            importlib.reload(claude_desktop)
+            adapter = claude_desktop.ClaudeDesktopAdapter()
             path = adapter.config_path()
         assert path is not None
         assert "Application Support" in str(path)
