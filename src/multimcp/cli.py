@@ -126,7 +126,7 @@ def cmd_install(
         tool: Specific tool name (e.g. ``"claude_desktop"``), or ``None`` to
               install into every supported adapter on the current platform.
         server_name: The MCP server key to write (default ``"multi-mcp"``).
-        server_config: Config dict to register.  Defaults to a stdio entry
+        server_config: Config dict to register.  Defaults to an SSE entry
                        that runs ``python main.py start --transport sse``.
 
     Returns:
@@ -154,7 +154,7 @@ def cmd_install(
             results.append(f"✅ {adapter.display_name}: registered '{server_name}' → {path}")
         except NotImplementedError as exc:
             results.append(f"⚠️  {adapter.display_name}: {exc}")
-        except (OSError, ValueError, KeyError) as exc:
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
             logger.warning(f"install failed for {adapter.tool_name}: {exc}")
             results.append(f"❌ {adapter.display_name}: {exc}")
 
@@ -194,6 +194,9 @@ def cmd_scan(tool: Optional[str] = None) -> str:
                 lines.append(f"\n{adapter.display_name}: (no servers configured)")
         except NotImplementedError as exc:
             lines.append(f"\n{adapter.display_name}: {exc}")
+        except RuntimeError as exc:
+            logger.error(f"scan failed for {adapter.tool_name}: {exc}")
+            lines.append(f"\n{adapter.display_name}: ❌ {exc}")
         except (OSError, ValueError, KeyError) as exc:
             logger.warning(f"scan failed for {adapter.tool_name}: {exc}")
             lines.append(f"\n{adapter.display_name}: ❌ {exc}")

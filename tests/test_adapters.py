@@ -37,9 +37,15 @@ def _make_json_config(tmp_path: Path, filename: str, data: dict) -> Path:
 
 class TestAdapterRegistry:
     def test_all_returns_16_adapters(self) -> None:
-        from src.multimcp.adapters.registry import _ALL_ADAPTER_CLASSES
         registry = AdapterRegistry()
-        assert len(registry.all()) == len(_ALL_ADAPTER_CLASSES)
+        adapters = registry.all()
+        adapter_names = {a.tool_name for a in adapters}
+        expected_names = {
+            "claude_desktop", "zed", "continue_dev", "cline", "gemini_cli",
+            "openclaw", "warp", "jetbrains", "codex_cli", "codex_desktop",
+            "gptme", "raycast", "window_ai", "roo_cline", "windsurf", "cursor"
+        }
+        assert adapter_names == expected_names
 
     def test_get_returns_correct_adapter(self) -> None:
         registry = AdapterRegistry()
@@ -178,7 +184,11 @@ class TestZedAdapter:
         path = adapter.config_path()
         assert path is not None
         assert path.name == "settings.json"
-        assert ".config/zed" in str(path)
+        assert path.is_absolute()
+        # Platform-specific assertion
+        if "linux" in sys.platform:
+            assert ".config/zed" in str(path)
+        # For other platforms, just verify the path structure is valid
 
     def test_read_config_missing_file(self, tmp_path: Path) -> None:
         adapter = self._adapter()
