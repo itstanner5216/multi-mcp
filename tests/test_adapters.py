@@ -819,13 +819,9 @@ class TestRaycastAdapter:
         assert "srv1" in servers
 
     def test_is_not_supported_on_linux(self) -> None:
-        with patch("sys.platform", "linux"):
-            from src.multimcp.adapters.tools.raycast import RaycastAdapter
-            from src.multimcp.adapters.base import _current_platform
-            adapter = RaycastAdapter()
-            # On Linux, current platform is "linux", not in ["macos"]
-            with patch("src.multimcp.adapters.base.sys.platform", "linux"):
-                assert not adapter.is_supported()
+        adapter = self._adapter()
+        with patch("src.multimcp.adapters.base.sys.platform", "linux"):
+            assert not adapter.is_supported()
 
 
 # ---------------------------------------------------------------------------
