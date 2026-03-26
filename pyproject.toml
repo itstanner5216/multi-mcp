@@ -18,6 +18,7 @@ dependencies = [
     "rich",
     "loguru",
     "langchain-mcp-adapters",
+    "tomli>=1.0.0; python_version < '3.11'",
     "tomli_w>=1.0.0",
 ]
 
