@@ -3,7 +3,7 @@ import anyio
 import argparse
 from pathlib import Path
 from src.multimcp.multi_mcp import MultiMCP
-from src.multimcp.cli import cmd_list, cmd_status, cmd_refresh, DEFAULT_YAML
+from src.multimcp.cli import cmd_list, cmd_status, cmd_refresh, cmd_install, cmd_scan, DEFAULT_YAML
 
 
 def parse_args():
@@ -36,6 +36,24 @@ def parse_args():
     lst.add_argument("--server", type=str, default=None, help="Filter to one server")
     lst.add_argument("--disabled", action="store_true", help="Show only disabled tools")
 
+    # install
+    install = sub.add_parser("install", help="Register this server in a tool's MCP config")
+    install.add_argument(
+        "--tool", type=str, default=None,
+        help="Target tool adapter name (e.g. claude_desktop). Omit to install into all."
+    )
+    install.add_argument(
+        "--server-name", type=str, default="multi-mcp",
+        help="Key to use for this server in the target config (default: multi-mcp)"
+    )
+
+    # scan
+    scan = sub.add_parser("scan", help="Discover MCP servers in a tool's config")
+    scan.add_argument(
+        "--tool", type=str, default=None,
+        help="Target tool adapter name (e.g. zed). Omit to scan all."
+    )
+
     return parser.parse_args()
 
 
@@ -64,3 +82,9 @@ if __name__ == "__main__":
 
     elif args.command == "list":
         print(cmd_list(server_filter=args.server, disabled_only=args.disabled))
+
+    elif args.command == "install":
+        print(cmd_install(tool=args.tool, server_name=args.server_name))
+
+    elif args.command == "scan":
+        print(cmd_scan(tool=args.tool))

@@ -9,6 +9,16 @@ from src.utils.logger import get_logger
 logger = get_logger("multi_mcp.cli")
 DEFAULT_YAML = Path.home() / ".config" / "multi-mcp" / "servers.yaml"
 
+# ---------------------------------------------------------------------------
+# Multi-MCP server entry used when self-registering into tool configs
+# ---------------------------------------------------------------------------
+_DEFAULT_SERVER_NAME = "multi-mcp"
+_DEFAULT_SERVER_CONFIG: dict = {
+    "command": "python",
+    "args": ["main.py", "start", "--transport", "sse"],
+    "env": {},
+}
+
 
 def cmd_list(
     yaml_path: Path = DEFAULT_YAML,
@@ -103,3 +113,89 @@ async def cmd_refresh(
     if zero_tool_servers:
         warning = f"\n⚠️  0 tools discovered for: {', '.join(zero_tool_servers)} — check server config"
     return f"✅ Refreshed {len(discovered)} server(s), {total_tools} tools discovered. Saved to {yaml_path}{warning}"
+
+
+def cmd_install(
+    tool: Optional[str] = None,
+    server_name: str = _DEFAULT_SERVER_NAME,
+    server_config: Optional[dict] = None,
+) -> str:
+    """Register the multi-mcp server entry into one or all tool configs.
+
+    Args:
+        tool: Specific tool name (e.g. ``"claude_desktop"``), or ``None`` to
+              install into every supported adapter on the current platform.
+        server_name: The MCP server key to write (default ``"multi-mcp"``).
+        server_config: Config dict to register.  Defaults to a stdio entry
+                       that runs ``python main.py start --transport sse``.
+
+    Returns:
+        A human-readable summary of what was installed and what failed.
+    """
+    from src.multimcp.adapters import get_adapter, list_adapters
+
+    if server_config is None:
+        server_config = _DEFAULT_SERVER_CONFIG
+
+    adapters = [get_adapter(tool)] if tool else list_adapters()
+    adapters = [a for a in adapters if a is not None]
+
+    if not adapters:
+        return f"❌ Unknown tool: {tool!r}. Run 'scan' without --tool to see available adapters."
+
+    results: list[str] = []
+    for adapter in adapters:
+        if not adapter.is_supported():
+            results.append(f"⏭  {adapter.display_name}: skipped (not supported on this platform)")
+            continue
+        try:
+            adapter.register_server(server_name, server_config)
+            path = adapter.config_path()
+            results.append(f"✅ {adapter.display_name}: registered '{server_name}' → {path}")
+        except NotImplementedError as exc:
+            results.append(f"⚠️  {adapter.display_name}: {exc}")
+        except (OSError, ValueError, KeyError) as exc:
+            logger.warning(f"install failed for {adapter.tool_name}: {exc}")
+            results.append(f"❌ {adapter.display_name}: {exc}")
+
+    return "\n".join(results)
+
+
+def cmd_scan(tool: Optional[str] = None) -> str:
+    """Scan one or all tool configs and print the discovered MCP servers.
+
+    Args:
+        tool: Specific tool name (e.g. ``"zed"``), or ``None`` to scan all.
+
+    Returns:
+        A human-readable table of discovered servers per tool.
+    """
+    from src.multimcp.adapters import get_adapter, list_adapters
+
+    adapters = [get_adapter(tool)] if tool else list_adapters()
+    adapters = [a for a in adapters if a is not None]
+
+    if not adapters:
+        return f"❌ Unknown tool: {tool!r}. Run 'scan' without --tool to see all adapters."
+
+    lines: list[str] = []
+    for adapter in adapters:
+        if not adapter.is_supported():
+            lines.append(f"⏭  {adapter.display_name}: not supported on this platform")
+            continue
+        try:
+            servers = adapter.discover_servers()
+            if servers:
+                lines.append(f"\n{adapter.display_name} ({len(servers)} server(s)):")
+                for name, cfg in servers.items():
+                    cmd = cfg.get("command") or cfg.get("url") or cfg.get("config_file") or "?"
+                    lines.append(f"  • {name}  [{cmd}]")
+            else:
+                lines.append(f"\n{adapter.display_name}: (no servers configured)")
+        except NotImplementedError as exc:
+            lines.append(f"\n{adapter.display_name}: {exc}")
+        except (OSError, ValueError, KeyError) as exc:
+            logger.warning(f"scan failed for {adapter.tool_name}: {exc}")
+            lines.append(f"\n{adapter.display_name}: ❌ {exc}")
+
+    return "\n".join(lines).lstrip("\n")
