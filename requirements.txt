@@ -44,4 +44,5 @@ urllib3==2.6.3
 uuid-utils==0.14.1
 uvicorn==0.42.0
 xxhash==3.6.0
+tomli_w==1.2.0
 zstandard==0.25.0
