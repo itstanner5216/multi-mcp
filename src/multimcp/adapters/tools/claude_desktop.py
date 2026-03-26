@@ -1,0 +1,58 @@
+"""Claude Desktop MCP config adapter."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Dict, Optional
+
+from src.multimcp.adapters.base import MCPConfigAdapter
+
+
+class ClaudeDesktopAdapter(MCPConfigAdapter):
+    """Adapter for Anthropic's Claude Desktop application."""
+
+    tool_name = "claude_desktop"
+    display_name = "Claude Desktop"
+    config_format = "json"
+    supported_platforms = ["macos", "linux", "windows"]
+
+    def config_path(self) -> Optional[Path]:
+        """Return the platform-specific path to claude_desktop_config.json."""
+        if sys.platform == "darwin":
+            return (
+                Path.home()
+                / "Library"
+                / "Application Support"
+                / "Claude"
+                / "claude_desktop_config.json"
+            )
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA", "")
+            return Path(appdata) / "Claude" / "claude_desktop_config.json"
+        return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+    def read_config(self) -> Dict:
+        """Read the Claude Desktop config JSON, returning {} if absent."""
+        path = self.config_path()
+        if path is None or not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def write_config(self, data: Dict) -> None:
+        """Write *data* to the Claude Desktop config file."""
+        path = self.config_path()
+        assert path is not None
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+    def register_server(self, name: str, config: Dict) -> None:
+        """Add or update an MCP server entry in the Claude Desktop config."""
+        data = self.read_config()
+        data.setdefault("mcpServers", {})[name] = config
+        self.write_config(data)
+
+    def discover_servers(self) -> Dict[str, Dict]:
+        """Return all MCP servers registered in the Claude Desktop config."""
+        return self.read_config().get("mcpServers", {})
