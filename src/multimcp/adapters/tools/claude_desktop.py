@@ -38,15 +38,17 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
 
     def config_path(self) -> Optional[Path]:
         """Return the platform-specific config file path."""
-        if sys.platform == "darwin":
+        platform = _current_platform()
+        if platform == "macos":
             return Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
-        if sys.platform == "win32":
+        elif platform == "windows":
             appdata = os.environ.get("APPDATA", "")
             if not appdata:
                 return None
             return Path(appdata) / "Claude" / "claude_desktop_config.json"
-        # Linux
-        return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        elif platform == "linux":
+            return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+        return None
 
     def read_config(self) -> dict:
         """Read and parse the JSON config file."""
