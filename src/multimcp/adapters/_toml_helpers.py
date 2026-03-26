@@ -6,7 +6,6 @@ Uses ``tomli_w`` for writing.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 
 def read_toml(path: Path) -> dict:
