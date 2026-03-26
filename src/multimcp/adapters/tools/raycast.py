@@ -43,7 +43,7 @@ class RaycastAdapter(MCPConfigAdapter):
 
     def config_path(self) -> Optional[Path]:
         """Return the Raycast MCP config file path."""
-        if sys.platform != "darwin":
+        if _current_platform() != "macos":
             return None
         return (
             Path.home()
