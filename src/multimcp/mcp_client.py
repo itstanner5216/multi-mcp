@@ -653,6 +653,10 @@ class MCPClientManager:
         if error_holder:
             raise error_holder[0]
 
+        # Keep a lightweight liveness monitor so a hung or silently dead session
+        # is cleaned up for watchdog-driven reconnects.
+        self._start_supervision(name)
+
     async def _stop_server_lifecycle(self, name: str) -> None:
         """Signal a server's lifecycle task to shut down and wait for it."""
         # Signal shutdown

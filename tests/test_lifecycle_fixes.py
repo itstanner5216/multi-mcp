@@ -108,7 +108,8 @@ async def test_supervision_cleans_up_dead_client():
     dead_session = MagicMock()
     dead_session.send_ping = AsyncMock(side_effect=Exception("connection lost"))
     mgr.clients["github"] = dead_session
-    mgr.server_stacks["github"] = AsyncMock()
+    mock_stack = AsyncMock()
+    mgr.server_stacks["github"] = mock_stack
 
     mgr._start_supervision("github", interval=0.1)
     assert "github" in mgr._supervision_tasks
@@ -120,6 +121,7 @@ async def test_supervision_cleans_up_dead_client():
 
     assert "github" not in mgr.clients
     assert "github" not in mgr.server_stacks
+    mock_stack.aclose.assert_not_called()
     mgr._on_server_disconnected.assert_called_once_with("github")
 
 
@@ -127,7 +129,6 @@ async def test_supervision_cleans_up_dead_client():
 async def test_supervision_cancelled_on_shutdown():
     """Supervision tasks should be cleanly cancellable."""
     mgr = _make_mgr()
-
     healthy_session = MagicMock()
     healthy_session.send_ping = AsyncMock(return_value=None)
     mgr.clients["healthy"] = healthy_session
@@ -154,8 +155,6 @@ async def test_lifecycle_task_catches_backend_crash():
     mgr = _make_mgr(_on_server_disconnected=AsyncMock())
 
     server_config = {"command": "node", "args": [], "env": {}}
-    crash_event = asyncio.Event()
-
     mock_session = AsyncMock()
 
     with patch("src.multimcp.mcp_client.stdio_client") as mock_stdio, \
@@ -171,8 +170,6 @@ async def test_lifecycle_task_catches_backend_crash():
     assert "crashing" in mgr.clients
     assert "crashing" in mgr._lifecycle_tasks
 
-    # Simulate backend crash by setting the shutdown event
-    # (in real use, the exception from the task group does this)
     evt = mgr._shutdown_events.get("crashing")
     if evt:
         evt.set()
@@ -184,5 +181,4 @@ async def test_lifecycle_task_catches_backend_crash():
         except Exception:
             pass
 
-    # After lifecycle ends, client should be cleaned up
     assert "crashing" not in mgr.clients
