@@ -1,13 +1,23 @@
 from __future__ import annotations
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from src.multimcp.yaml_config import load_config, MultiMCPConfig
 from src.multimcp.cache_manager import merge_discovered_tools, cleanup_stale_tools
 from src.utils.logger import get_logger
 
 logger = get_logger("multi_mcp.cli")
 DEFAULT_YAML = Path.home() / ".config" / "multi-mcp" / "servers.yaml"
+
+# ---------------------------------------------------------------------------
+# Adapter install / scan defaults
+# ---------------------------------------------------------------------------
+
+_DEFAULT_SERVER_NAME: str = "multi-mcp"
+_DEFAULT_SERVER_CONFIG: Dict[str, Any] = {
+    "command": "uvx",
+    "args": ["--from", "multi-mcp", "multi-mcp", "--transport", "sse"],
+}
 
 
 def cmd_list(
@@ -103,3 +113,105 @@ async def cmd_refresh(
     if zero_tool_servers:
         warning = f"\n⚠️  0 tools discovered for: {', '.join(zero_tool_servers)} — check server config"
     return f"✅ Refreshed {len(discovered)} server(s), {total_tools} tools discovered. Saved to {yaml_path}{warning}"
+
+
+# ---------------------------------------------------------------------------
+# Adapter install / scan commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_install(
+    tool: Optional[str] = None,
+    server_name: Optional[str] = None,
+    server_config: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Register *server_name* / *server_config* into one or all AI tool configs.
+
+    When *tool* is None every registered adapter is attempted.  When *tool* is
+    a string only the matching adapter is used.
+
+    Returns a human-readable multi-line summary of results.
+    """
+    from src.multimcp.adapters import get_adapter, list_adapters
+    from src.multimcp.adapters.base import MCPConfigAdapter as _MCPAdapter
+
+    effective_name = server_name if server_name is not None else _DEFAULT_SERVER_NAME
+    effective_config = server_config if server_config is not None else _DEFAULT_SERVER_CONFIG
+
+    if tool is not None:
+        adapter = get_adapter(tool)
+        if adapter is None:
+            return f"❌ Unknown tool: {tool}"
+        adapters: List[_MCPAdapter] = [adapter]
+    else:
+        adapters = list_adapters()
+
+    lines: List[str] = []
+    for adapter in adapters:
+        display = adapter.display_name
+        if not adapter.is_supported():
+            lines.append(f"⏭  {display} — skipped (not supported on this platform)")
+            continue
+        try:
+            adapter.register_server(effective_name, effective_config)
+            cfg_path = adapter.config_path()
+            lines.append(f"✅ {display} — registered at {cfg_path}")
+        except NotImplementedError as exc:
+            lines.append(f"⚠️  {display} — {exc}")
+        except (OSError, ValueError) as exc:
+            lines.append(f"❌ {display} — {exc}")
+
+    return "\n".join(lines)
+
+
+def cmd_scan(tool: Optional[str] = None) -> str:
+    """Scan one or all AI tool configs and report registered MCP servers.
+
+    When *tool* is None every registered adapter is scanned.  When *tool* is a
+    string only the matching adapter is scanned.
+
+    Returns a human-readable multi-line summary.
+    """
+    from src.multimcp.adapters import get_adapter, list_adapters
+    from src.multimcp.adapters.base import MCPConfigAdapter as _MCPAdapter
+
+    if tool is not None:
+        adapter = get_adapter(tool)
+        if adapter is None:
+            return f"❌ Unknown tool: {tool}"
+        adapters: List[_MCPAdapter] = [adapter]
+    else:
+        adapters = list_adapters()
+
+    lines: List[str] = []
+    for adapter in adapters:
+        display = adapter.display_name
+        if not adapter.is_supported():
+            lines.append(f"⏭  {display} — not supported on this platform")
+            continue
+        try:
+            servers = adapter.discover_servers()
+        except NotImplementedError as exc:
+            lines.append(f"ℹ️  {display} — {exc}")
+            continue
+        except (OSError, ValueError) as exc:
+            lines.append(f"❌ {display} — {exc}")
+            continue
+
+        count = len(servers)
+        if count == 0:
+            lines.append(f"{display} — no servers configured")
+        else:
+            lines.append(f"{display} — {count} server(s):")
+            for srv_name, srv_cfg in servers.items():
+                if "command" in srv_cfg:
+                    detail = srv_cfg["command"]
+                elif "url" in srv_cfg:
+                    detail = srv_cfg["url"]
+                elif "config_file" in srv_cfg:
+                    detail = srv_cfg["config_file"]
+                else:
+                    detail = "(no details)"
+                lines.append(f"  • {srv_name}: {detail}")
+
+    return "\n".join(lines)

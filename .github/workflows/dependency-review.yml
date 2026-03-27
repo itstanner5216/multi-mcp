@@ -1,0 +1,39 @@
+# Dependency Review
+# Blocks PRs that introduce dependencies with known vulnerabilities (CVEs)
+# Docs: https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review
+
+name: "Dependency Review"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "Dockerfile"
+
+jobs:
+  dependency-review:
+    name: Scan for Vulnerable Dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block PRs introducing high or critical severity vulnerabilities
+          fail-on-severity: high
+          # Post a summary comment directly on the PR
+          comment-summary-in-pr: always
+          # Warn on packages with copyleft licenses that may conflict with your LICENSE
+          deny-licenses: GPL-2.0, GPL-3.0, AGPL-3.0
