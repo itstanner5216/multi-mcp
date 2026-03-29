@@ -7,7 +7,7 @@
 | 1 | Foundations | BMXF scorer in shadow, all existing tests pass | SCORE-01–04, CATALOG-01–04, WIRE-01–02, TEST-01–02 | 3 |
 | 2 | Safe Lexical MVP | 2/3 | In Progress|  |
 | 3 | Turn-by-Turn Adaptive | 4/4 | Complete   | 2026-03-29 |
-| 4 | Rollout Hardening | 1/4 | In Progress|  |
+| 4 | Rollout Hardening | 2/4 | In Progress|  |
 | 5 | Post-GA Learning | PPMI-weighted scoring; exploration injection | v2 requirements (PPMI, exploration, co-occurrence) | 2 |
 | 6 | Verification & Compliance | All 6 core invariants enforced by automated tests; trust boundary audit passes | VERIFY-01–06 | 6 |
 
@@ -110,10 +110,10 @@ Plans:
 
 **Requirements:** Shadow→canary feature flags, rollout gates, alert thresholds, replay regression structure
 
-**Plans:** 1/4 plans executed
+**Plans:** 2/4 plans executed
 
 Plans:
-- [ ] 04-01-PLAN.md — Canary rollout config (RetrievalConfig fields) + session assignment utility + tests
+- [x] 04-01-PLAN.md — Canary rollout config (RetrievalConfig fields) + session assignment utility + tests
 - [x] 04-02-PLAN.md — Replay evaluator module (JSONL → metrics → cutover gate check) + tests
 - [ ] 04-03-PLAN.md — Pipeline canary routing + RankingEvent group labeling + logging alerts + tests
 - [ ] 04-04-PLAN.md — Metric aggregation + alert thresholds + operator runbook + tests
