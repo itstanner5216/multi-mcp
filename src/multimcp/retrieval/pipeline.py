@@ -86,15 +86,22 @@ class RetrievalPipeline:
 
         all_registry_keys = list(self.tool_registry.keys())
 
-        # Dynamic K: base 15 (floor), +3 if polyglot workspace, cap at 20 (FUSION-03)
-        base_k = max(15, self.config.max_k)
+        # Dynamic K (FUSION-03): base 15, +3 if polyglot (max_k>17 proxy), cap at 20.
+        # Routing tool is counted within dynamic_k (reserve 1 slot when routing enabled).
         polyglot_bonus = 3 if self.config.max_k > 17 else 0
-        max_k = min(20, base_k + polyglot_bonus)
+        dynamic_k = min(20, max(15, self.config.max_k) + polyglot_bonus)
+        # Reserve one slot for the routing tool so total(direct + routing) <= dynamic_k
+        if self.config.enable_routing_tool and _HAS_ROUTING_TOOL:
+            direct_k = max(1, dynamic_k - 1)
+        else:
+            direct_k = dynamic_k
 
         if not active_keys:
-            # Seed with top-K from full registry sorted by key (Phase 2 default)
-            active_keys = set(sorted(all_registry_keys)[:max_k])
-        active_keys_list = sorted(active_keys)[:max_k]
+            # Fresh session: seed with raw config.max_k (not the floor) so that
+            # explicit small K values are respected for initial tool exposure.
+            active_keys = set(sorted(all_registry_keys)[:self.config.max_k])
+
+        active_keys_list = sorted(active_keys)[:direct_k]
 
         # Build active mappings
         active_mappings = [
