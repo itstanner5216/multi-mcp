@@ -122,6 +122,16 @@ None - no external service configuration required.
 - `RankingEvent.group` ready for replay evaluator cohort splitting in 04-03/04-04
 - 952 tests passing total (952 = 922 pre-existing + 16 rollout + 14 from __init__ expansion)
 
+## Self-Check: PASSED
+
+- FOUND: src/multimcp/retrieval/models.py
+- FOUND: src/multimcp/retrieval/rollout.py
+- FOUND: tests/test_rollout.py
+- FOUND: .planning/phases/04-rollout-hardening/04-01-SUMMARY.md
+- FOUND: commit 61b81f3 (Task 1)
+- FOUND: commit f235686 (Task 2)
+- FOUND: commit 3cd0aa2 (Task 3)
+
 ---
 *Phase: 04-rollout-hardening*
 *Completed: 2026-03-29*
