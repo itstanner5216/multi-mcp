@@ -77,6 +77,10 @@ A code-grounded implementation of roots-anchored BMXF tool retrieval for the Mul
 - [ ] Promote/demote hysteresis (replaces monotonic guarantee)
 - [ ] Shadow mode and feature flags in `RetrievalConfig`
 - [ ] Test suite parallel to existing naming conventions
+- ✓ Canary rollout infrastructure (canary_percentage, rollout_stage, is_canary_session) — Validated in Phase 4: rollout-hardening
+- ✓ Offline replay evaluator with cutover gates (p95 < 50ms, tier56 < 5%) — Validated in Phase 4: rollout-hardening
+- ✓ Online rolling metrics (RollingMetrics, AlertChecker) — Validated in Phase 4: rollout-hardening
+- ✓ Operator runbook for shadow → canary → GA lifecycle — Validated in Phase 4: rollout-hardening
 
 ### Out of Scope
 
@@ -99,4 +103,4 @@ This document evolves at phase transitions and milestone boundaries.
 5. "What This Is" still accurate? → Update if drifted
 
 ---
-*Last updated: 2026-03-28 after initialization from PHASE2-SYNTHESIZED-PLAN.md*
+*Last updated: 2026-03-29 — Phase 4 complete (rollout-hardening)*
