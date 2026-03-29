@@ -6,6 +6,7 @@ from .catalog import build_snapshot
 from .logging import NullLogger, RetrievalLogger
 from .models import RetrievalConfig, RetrievalContext, ScoredTool, ToolCatalogSnapshot, ToolDoc
 from .pipeline import RetrievalPipeline
+from .rollout import get_session_group, is_canary_session
 from .session import SessionStateManager
 
 __all__ = [
@@ -22,4 +23,6 @@ __all__ = [
     "ToolDoc",
     "ToolRetriever",
     "build_snapshot",
+    "get_session_group",
+    "is_canary_session",
 ]
