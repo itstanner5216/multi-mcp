@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-status: Ready to plan
-stopped_at: "Completed 02-03-PLAN.md: FileRetrievalLogger, bounded-K pipeline, routing tool dispatch in mcp_proxy"
-last_updated: "2026-03-29T04:22:13.583Z"
+current_phase: 03
+status: Executing Phase 03
+stopped_at: "Completed 03-01-PLAN.md: weighted_rrf and compute_alpha in fusion.py, test_rrf_fusion.py with 20 tests"
+last_updated: "2026-03-29T04:46:13.025Z"
 progress:
   total_phases: 5
   completed_phases: 1
-  total_plans: 5
-  completed_plans: 3
+  total_plans: 9
+  completed_plans: 5
 ---
 
 # Project State
@@ -18,7 +18,7 @@ progress:
 ## Current Status
 
 - **Milestone:** Phase 2 — BMXF Routing
-- **Current Phase:** 3
+- **Current Phase:** 03
 - **Phase Status:** Not started
 - **Last Updated:** 2026-03-28
 
@@ -40,8 +40,8 @@ Goal: Bounded turn-zero active set derived from roots. No full-catalog exposure.
 
 ## Session Continuity
 
-Last session: 2026-03-29T03:41:30.000Z
-Stopped at: Completed 02-03-PLAN.md: FileRetrievalLogger, bounded-K pipeline, routing tool dispatch in mcp_proxy
+Last session: 2026-03-29T04:46:09.019Z
+Stopped at: Completed 03-01-PLAN.md: weighted_rrf and compute_alpha in fusion.py, test_rrf_fusion.py with 20 tests
 
 ## Context Notes
 
@@ -66,3 +66,5 @@ Stopped at: Completed 02-03-PLAN.md: FileRetrievalLogger, bounded-K pipeline, ro
 | 2026-03-29 | Lazy import ROUTING_TOOL_KEY in _call_tool() | Avoids circular import between mcp_proxy and retrieval subpackage |
 | 2026-03-29 | RankingEvent.turn_number=0 for Phase 2 | Turn tracking deferred to Phase 3 |
 | 2026-03-29 | Tier 6 fallback capped at 30 (not 20) | Wider visibility in zero-state sessions without full-registry exposure |
+| 2026-03-29 | demote() slices safe_to_demote[:max_per_turn] in input order | Deterministic; preserves caller's priority ordering |
+| 2026-03-29 | promote()/demote() return [] for unknown sessions | Consistent with add_tools() safe-default pattern; no exception raised |

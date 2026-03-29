@@ -6,7 +6,7 @@
 |---|-------|------|--------------|------------------|
 | 1 | Foundations | BMXF scorer in shadow, all existing tests pass | SCORE-01–04, CATALOG-01–04, WIRE-01–02, TEST-01–02 | 3 |
 | 2 | Safe Lexical MVP | 2/3 | In Progress|  |
-| 3 | Turn-by-Turn Adaptive | Describe rate improves; churn bounded; p95 <50ms | FUSION-01–03, SESSION-01–04, TELEM-05, TEST-05–06 | 4 |
+| 3 | Turn-by-Turn Adaptive | 2/4 | In Progress|  |
 | 4 | Rollout Hardening | All rollout gates pass in shadow; alerting complete | Migration flags, shadow→canary controls, dashboards, replay gate | 3 |
 | 5 | Post-GA Learning | PPMI-weighted scoring; exploration injection | v2 requirements (PPMI, exploration, co-occurrence) | 2 |
 
