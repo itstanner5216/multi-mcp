@@ -48,6 +48,44 @@ class SessionStateManager:
         session.update(new_keys)
         return new_keys
 
+    def promote(self, session_id: str, tool_keys: list[str]) -> list[str]:
+        """Add tools to active set at turn boundary. Returns newly promoted keys.
+
+        Does nothing for unknown sessions. Never re-adds already-active tools.
+        Callers should use this instead of add_tools() when promoting based on
+        ranking signals (SESSION-02).
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return []
+        new_keys = [k for k in tool_keys if k not in session]
+        session.update(new_keys)
+        return new_keys
+
+    def demote(
+        self,
+        session_id: str,
+        tool_keys: list[str],
+        used_this_turn: set[str],
+        max_per_turn: int = 3,
+    ) -> list[str]:
+        """Remove tools from active set with hysteresis safety constraints.
+
+        Never demotes tools used this turn (used_this_turn).
+        Demotes at most max_per_turn tools per call (SESSION-03).
+        Returns list of actually demoted tool keys.
+        Does nothing for unknown sessions.
+        """
+        session = self._sessions.get(session_id)
+        if session is None:
+            return []
+        safe_to_demote = [
+            k for k in tool_keys if k in session and k not in used_this_turn
+        ]
+        demoted = safe_to_demote[:max_per_turn]
+        session -= set(demoted)
+        return demoted
+
     def cleanup_session(self, session_id: str) -> None:
         """Remove session state, freeing memory. Safe to call for nonexistent sessions."""
         self._sessions.pop(session_id, None)
