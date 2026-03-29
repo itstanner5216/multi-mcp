@@ -275,6 +275,33 @@ class KeywordRetriever(ToolRetriever):
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:self._config.top_k]
 
+    # ── Token scoring (public utility) ─────────────────────────────────
+
+    def _score_tokens(self, query_tokens: list[str], doc_tokens: list[str]) -> float:
+        """Compute TF-IDF similarity between query and document tokens.
+
+        Lightweight utility that does not require precomputed norms.
+        Returns 0.0 for empty inputs.
+        """
+        if not doc_tokens or not query_tokens:
+            return 0.0
+
+        doc_tf = Counter(doc_tokens)
+        doc_len = len(doc_tokens)
+
+        score = 0.0
+        for qt in query_tokens:
+            if qt in doc_tf:
+                tf = doc_tf[qt] / doc_len
+                idf = self._idf.get(qt, 1.0)
+                score += tf * idf
+
+        max_possible = sum(self._idf.get(qt, 1.0) for qt in query_tokens)
+        if max_possible > 0:
+            score /= max_possible
+
+        return min(score, 1.0)
+
     # ── Field scoring ──────────────────────────────────────────────────
 
     def _score_field(

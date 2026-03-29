@@ -209,8 +209,9 @@ class TestDynamicK:
         # Seed all 25 tools into session
         p.session_manager.add_tools("s1", list(registry.keys()))
         tools = await p.get_tools_for_list("s1")
-        # Dynamic K: max_k=20 -> no polyglot bonus -> stays at 20
-        assert len(tools) <= 20
+        # Dynamic K: max_k=20 -> no polyglot bonus -> stays at 20 direct tools
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) <= 20
 
     @pytest.mark.asyncio
     async def test_max_k_10_bumped_to_base_15(self):
@@ -224,9 +225,10 @@ class TestDynamicK:
         p.session_manager.get_or_create_session("s1")
         p.session_manager.add_tools("s1", list(registry.keys()))
         tools = await p.get_tools_for_list("s1")
-        # base_k = max(15, 10) = 15; no polyglot bonus
-        assert len(tools) <= 15
-        assert len(tools) >= 15  # should exactly be 15 (20 tools available, K=15)
+        # base_k = max(15, 10) = 15; routing takes 1 slot → 14 direct + 1 routing = 15 total
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) <= 15
+        assert len(non_routing) >= 14  # K=15 total: 14 direct + 1 routing slot (20 tools → demoted exist)
 
     @pytest.mark.asyncio
     async def test_max_k_18_adds_polyglot_bonus(self):
