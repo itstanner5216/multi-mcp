@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any
+from typing import Any, Optional
 
 from mcp import types
 
@@ -63,17 +63,21 @@ class TieredAssembler:
         self,
         tools: list[ScoredTool],
         config: RetrievalConfig,
+        routing_tool_schema: Optional[types.Tool] = None,
     ) -> list[types.Tool]:
         """Create tiered Tool copies from ranked ScoredTools.
 
         First `config.full_description_count` tools get full descriptions.
         Remaining tools get truncated descriptions and simplified schemas.
         NEVER mutates the original Tool objects in the registry.
-        """
-        if not tools:
-            return []
 
+        If routing_tool_schema is provided, it is appended as the final element
+        of the returned list, making demoted tools discoverable.
+        """
         result: list[types.Tool] = []
+
+        if not tools and routing_tool_schema is None:
+            return result
         for i, scored in enumerate(tools):
             original = scored.tool_mapping.tool
             if i < config.full_description_count:
@@ -98,4 +102,6 @@ class TieredAssembler:
                         ),
                     )
                 )
+        if routing_tool_schema is not None:
+            result.append(routing_tool_schema)
         return result
