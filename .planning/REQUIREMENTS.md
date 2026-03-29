@@ -29,7 +29,7 @@
 - [x] **TELEM-02**: System extracts typed sparse tokens (`manifest:Cargo.toml(3.0)`, `lang:rust(2.0)`, `ci:github-actions(1.5)`) into `RootEvidence` and `WorkspaceEvidence` dataclasses
 - [x] **TELEM-03**: System enforces scan limits: max depth 6, max 10K entries, 150ms hard timeout per root
 - [x] **TELEM-04**: System denies reading `.env*`, SSH keys, cloud credentials, arbitrary source files, or anything outside declared roots
-- [ ] **TELEM-05**: System implements `telemetry/monitor.py` with adaptive polling (5s → 10s → 20s → 30s) and significance threshold (cumulative ≥ 0.7 triggers re-score)
+- [x] **TELEM-05**: System implements `telemetry/monitor.py` with adaptive polling (5s → 10s → 20s → 30s) and significance threshold (cumulative ≥ 0.7 triggers re-score)
 
 ### Routing Tool (ROUTER)
 
