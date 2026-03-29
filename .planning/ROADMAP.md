@@ -116,7 +116,7 @@ Plans:
 - [x] 04-01-PLAN.md — Canary rollout config (RetrievalConfig fields) + session assignment utility + tests
 - [x] 04-02-PLAN.md — Replay evaluator module (JSONL → metrics → cutover gate check) + tests
 - [x] 04-03-PLAN.md — Pipeline canary routing + RankingEvent group labeling + logging alerts + tests
-- [ ] 04-04-PLAN.md — Metric aggregation + alert thresholds + operator runbook + tests
+- [x] 04-04-PLAN.md — Metric aggregation + alert thresholds + operator runbook + tests
 
 **New files:**
 - `src/multimcp/retrieval/rollout.py` — Deterministic canary session assignment

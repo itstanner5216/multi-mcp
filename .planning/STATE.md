@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 status: Executing Phase 04
-stopped_at: "Completed 04-03-PLAN.md: Canary routing in pipeline + log_alert() + 10 canary tests, 958 tests passing"
-last_updated: "2026-03-29T18:29:42.893Z"
+stopped_at: "Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)"
+last_updated: "2026-03-29T18:42:18.887Z"
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 17
-  completed_plans: 10
+  completed_plans: 11
 ---
 
 # Project State
@@ -19,14 +19,14 @@ progress:
 
 - **Milestone:** Phase 3 — Turn-by-Turn Adaptive
 - **Current Phase:** 04
-- **Phase Status:** ✅ Complete — verified 2026-03-29 (922 tests passing, 20/20 must-haves)
+- **Phase Status:** ✅ Complete — Phase 4 all 4 plans done, 970 tests passing
 - **Last Updated:** 2026-03-29
 
 ## Active Phase
 
-**Phase 3: Turn-by-Turn Adaptive**
+**Phase 4: Rollout Hardening — COMPLETE**
 
-Goal: Per-session turn tracking, dynamic K (FUSION-03), RRF fusion blend in pipeline, RootMonitor adaptive polling.
+Goal: Canary rollout infrastructure, offline replay evaluator, online metrics/alerting, operator runbook.
 
 ## Phase Progress
 
@@ -35,14 +35,14 @@ Goal: Per-session turn tracking, dynamic K (FUSION-03), RRF fusion blend in pipe
 | 1 | Foundations | ✅ Complete |
 | 2 | Safe Lexical MVP | ✅ Complete |
 | 3 | Turn-by-Turn Adaptive | ✅ Complete (4/4 plans) |
-| 4 | Rollout Hardening | 📋 Planned (4 plans) |
+| 4 | Rollout Hardening | ✅ Complete (4/4 plans) |
 | 5 | Post-GA Learning | 📋 Planned (3 plans) |
 | 6 | Verification & Compliance | 📋 Planned (1 plan) |
 
 ## Session Continuity
 
-Last session: 2026-03-29T18:29:42.889Z
-Stopped at: Completed 04-03-PLAN.md: Canary routing in pipeline + log_alert() + 10 canary tests, 958 tests passing
+Last session: 2026-03-29T18:41:08Z
+Stopped at: Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)
 
 ## Context Notes
 
@@ -77,3 +77,5 @@ Stopped at: Completed 04-03-PLAN.md: Canary routing in pipeline + log_alert() + 
 | 2026-03-29 | shadow mode (default) returns all tools — tests use rollout_stage=ga for filtering (04-03) | Shadow=passthrough is backward compatible; filtering tests must explicitly opt-in to ga mode |
 | 2026-03-29 | is_filtered flag gates bounded active set vs passthrough in get_tools_for_list (04-03) | Single branch point for canary routing keeps logic readable |
 | 2026-03-29 | FileRetrievalLogger.log_alert uses lazy import time as _time (04-03) | Avoids module-level name collision; consistent with existing patterns |
+| 2026-03-29 | AlertChecker takes MetricSnapshot not RollingMetrics (04-04) | Separates computation from alerting; enables unit testing without time.monotonic() |
+| 2026-03-29 | pct() uses min(int(p*n), n-1) index matching replay.py (04-04) | Consistent percentile calculation across offline replay and online RollingMetrics |
