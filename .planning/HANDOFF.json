@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-03-29T17:19:13.365Z",
+  "phase": "03",
+  "phase_name": "Turn-by-Turn Adaptive",
+  "phase_dir": ".planning/phases/03-turn-by-turn-adaptive",
+  "plan": 4,
+  "task": 4,
+  "total_tasks": 4,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "fusion.py — weighted_rrf + compute_alpha", "status": "done", "commit": "cherry-picked from worktree"},
+    {"id": 2, "name": "session.py — promote()/demote() hysteresis", "status": "done", "commit": "cherry-picked from worktree"},
+    {"id": 3, "name": "telemetry/monitor.py — RootMonitor adaptive polling", "status": "done", "commit": "cherry-picked from worktree"},
+    {"id": 4, "name": "pipeline.py — turn tracking, dynamic K, fusion import", "status": "done", "commit": "63a1a04"}
+  ],
+  "remaining_tasks": [],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "Routing tool counts within K budget (slot reservation)", "rationale": "direct_k = dynamic_k - 1 ensures total <= dynamic_k; test_max_k_less_than_15_uses_15 requires this", "phase": "03"},
+    {"decision": "Fresh session seeds with raw config.max_k, not the dynamic floor", "rationale": "Respects explicit small-K operator settings for initial exposure", "phase": "03"},
+    {"decision": "Polyglot detection via config.max_k > 17 heuristic", "rationale": "Conservative; full WorkspaceEvidence threading deferred", "phase": "03"},
+    {"decision": "Tier 6 fallback capped at 30 (not 20)", "rationale": "Wider visibility in zero-state sessions without full-registry exposure", "phase": "03"},
+    {"decision": "Keep _score_tokens as separate utility alongside _score_field", "rationale": "Different signatures — utility doesn't need precomputed norms; tests depend on it", "phase": "03"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "Plan Phase 4 (Rollout Hardening) using /gsd:plan-phase 4 at /home/tanner/Projects/multi-mcp. Use docs/PHASE2-SYNTHESIZED-PLAN.md as the plan source. Skip research phase and extensive questions per user preference.",
+  "context_notes": "All 922 tests passing. Phase 3 verified 20/20. Clean main branch. User wants Phase 4 planned with Opus model. Plan source is docs/PHASE2-SYNTHESIZED-PLAN.md — skip research, skip extensive questions, use pre-made plan directly.",
+  "planning_instructions": {
+    "plan_source": "/home/tanner/Projects/multi-mcp/docs/PHASE2-SYNTHESIZED-PLAN.md",
+    "skip_research_phase": true,
+    "skip_extensive_questions": true,
+    "ask_questions_only_if": "pre-made plan document does not answer something"
+  }
+}
