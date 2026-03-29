@@ -50,6 +50,13 @@ Plans:
 
 **Requirements:** TELEM-01, TELEM-02, TELEM-03, TELEM-04, ROUTER-01, ROUTER-02, ROUTER-03, ROUTER-04, FALLBACK-01, FALLBACK-02, OBS-01, OBS-02, TEST-03, TEST-04
 
+**Plans:** 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Telemetry subpackage (scanner, evidence, tokens) + test_telemetry_scanner.py
+- [ ] 02-02-PLAN.md — RoutingTool + assembler routing-tool tier + test_routing_tool.py
+- [ ] 02-03-PLAN.md — FileRetrievalLogger + pipeline bounded-K + mcp_proxy routing dispatch
+
 **New files:**
 - `src/multimcp/retrieval/telemetry/__init__.py`
 - `src/multimcp/retrieval/telemetry/scanner.py` — allowlisted root scanner
@@ -60,10 +67,10 @@ Plans:
 - `tests/test_routing_tool.py`
 
 **Updated files:**
-- `src/multimcp/retrieval/assembler.py` — routing-tool tier
-- `src/multimcp/retrieval/pipeline.py` — wire BMXF, fallback chain
+- `src/multimcp/retrieval/assembler.py` — routing-tool tier (optional routing_tool_schema param)
+- `src/multimcp/retrieval/pipeline.py` — bounded K, routing tool, fallback chain, RankingEvent emission
 - `src/multimcp/retrieval/logging.py` — FileRetrievalLogger
-- `src/multimcp/mcp_proxy.py` — register routing tool in `_register_request_handlers()`
+- `src/multimcp/mcp_proxy.py` — ROUTING_TOOL_KEY dispatch in _call_tool()
 
 **Success criteria:**
 1. Session init exposes ≤20 tools directly; remaining tools accessible only via routing tool (never full catalog dump)
