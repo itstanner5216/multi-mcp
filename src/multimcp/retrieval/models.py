@@ -47,6 +47,9 @@ class RetrievalConfig:
     enable_routing_tool: bool = True
     enable_telemetry: bool = True
     telemetry_poll_interval: int = 30
+    # Phase 4: Rollout hardening
+    canary_percentage: float = 0.0        # 0.0-100.0; % of sessions routed to BMXF filtering
+    rollout_stage: str = "shadow"         # "shadow" | "canary" | "ga"
 
 
 # === Phase 2: Tool catalog types ===
@@ -153,3 +156,4 @@ class RankingEvent:
     router_describes: list[str] = field(default_factory=list)
     router_proxies: list[str] = field(default_factory=list)
     scorer_latency_ms: float = 0.0
+    group: str = "control"                # "canary" | "control" — set by pipeline
