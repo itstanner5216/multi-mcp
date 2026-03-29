@@ -3,25 +3,30 @@
 ## Current Status
 
 - **Milestone:** Phase 2 — BMXF Routing
-- **Current Phase:** 1 (Foundations)
+- **Current Phase:** 2 (Safe Lexical MVP)
 - **Phase Status:** Not started
 - **Last Updated:** 2026-03-28
 
 ## Active Phase
 
-**Phase 1: Foundations**
+**Phase 2: Safe Lexical MVP**
 
-Goal: BMXF scores computed in shadow mode. Existing behavior unchanged. All 46+ existing tests pass.
+Goal: Bounded turn-zero active set derived from roots. No full-catalog exposure. Recall@15 > baseline (PassthroughRetriever).
 
 ## Phase Progress
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Foundations | 🔲 Not started |
+| 1 | Foundations | ✅ Complete |
 | 2 | Safe Lexical MVP | 🔲 Not started |
 | 3 | Turn-by-Turn Adaptive | 🔲 Not started |
 | 4 | Rollout Hardening | 🔲 Not started |
 | 5 | Post-GA Learning | 🔲 Not started |
+
+## Session Continuity
+
+Last session: 2026-03-28
+Stopped at: Phase 1 complete. All 42 new tests pass (test_catalog_snapshot, test_bmx_retriever). Ready to start Phase 2.
 
 ## Context Notes
 

@@ -491,16 +491,20 @@ class MultiMCP:
             self.proxy = await MCPProxyServer.create(self.client_manager)
             self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
-            # Initialize retrieval pipeline (disabled by default — passthrough mode)
+            # Initialize retrieval pipeline — BMXFRetriever in shadow mode (WIRE-01).
+            # shadow_mode=True: scoring proceeds but all tools are still returned,
+            # preserving existing behaviour until metrics confirm improvement.
+            # enabled=False: pipeline gating also off (double-safe default).
             from src.multimcp.retrieval.pipeline import RetrievalPipeline
-            from src.multimcp.retrieval.base import PassthroughRetriever
+            from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
             from src.multimcp.retrieval.logging import NullLogger
             from src.multimcp.retrieval.session import SessionStateManager
             from src.multimcp.retrieval.models import RetrievalConfig
 
-            retrieval_config = RetrievalConfig(enabled=False)
+            retrieval_config = RetrievalConfig(enabled=False, shadow_mode=True)
+            bmxf_retriever = BMXFRetriever(config=retrieval_config)
             self.proxy.retrieval_pipeline = RetrievalPipeline(
-                retriever=PassthroughRetriever(),
+                retriever=bmxf_retriever,
                 session_manager=SessionStateManager(retrieval_config),
                 logger=NullLogger(),
                 config=retrieval_config,

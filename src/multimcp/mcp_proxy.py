@@ -180,6 +180,8 @@ class MCPProxyServer(server.Server):
             caps = self.capabilities.get(name)
             if caps and caps.tools:
                 await self._send_tools_list_changed()
+                if self.retrieval_pipeline is not None:
+                    self.retrieval_pipeline.rebuild_catalog(self.tool_to_server)
             if caps and caps.prompts:
                 await self._send_prompts_list_changed()
             if caps and caps.resources:
@@ -229,6 +231,8 @@ class MCPProxyServer(server.Server):
             # Send notifications for removed capabilities
             if had_tools:
                 await self._send_tools_list_changed()
+                if self.retrieval_pipeline is not None:
+                    self.retrieval_pipeline.rebuild_catalog(self.tool_to_server)
             had_prompts = caps and caps.prompts if caps else False
             if had_prompts:
                 await self._send_prompts_list_changed()

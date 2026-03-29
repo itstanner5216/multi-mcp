@@ -83,6 +83,17 @@ class RetrievalPipeline:
         # Fallback: return raw Tool objects without ranking/tiering
         return [mapping.tool for _, mapping in active_mappings]
 
+    def rebuild_catalog(self, registry: "dict[str, ToolMapping]") -> None:
+        """Rebuild the retriever's index when the tool registry changes.
+
+        Called by MCPProxyServer.register_client() and unregister_client()
+        after any registry mutation (WIRE-02). No-op if retriever does not
+        implement rebuild_index (e.g. PassthroughRetriever).
+        """
+        rebuild = getattr(self.retriever, "rebuild_index", None)
+        if callable(rebuild):
+            rebuild(registry)
+
     async def on_tool_called(
         self,
         session_id: str,
