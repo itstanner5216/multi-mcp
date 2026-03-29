@@ -95,8 +95,10 @@ class TestPipelineWithRankerAndAssembler:
             assembler=TieredAssembler(),
         )
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 1
-        assert tools[0].name == "get_me"
+        # With routing tool enabled (default), anchor + routing tool for demoted exa__search
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 1
+        assert non_routing[0].name == "get_me"
 
     @pytest.mark.asyncio
     async def test_monotonic_guarantee(self):
@@ -118,16 +120,19 @@ class TestPipelineWithRankerAndAssembler:
             ranker=RelevanceRanker(),
             assembler=TieredAssembler(),
         )
-        # First call: only anchor
+        # First call: only anchor (+ routing tool for 2 demoted tools)
         tools_1 = await pipeline.get_tools_for_list("s1")
-        assert len(tools_1) == 1
+        non_routing_1 = [t for t in tools_1 if t.name != "request_tool"]
+        assert len(non_routing_1) == 1
 
-        # Add tools
+        # Add tools — monotonic guarantee: active tools only grows
         pipeline.session_manager.add_tools("s1", ["exa__search"])
         tools_2 = await pipeline.get_tools_for_list("s1")
-        assert len(tools_2) >= len(tools_1)
+        non_routing_2 = [t for t in tools_2 if t.name != "request_tool"]
+        assert len(non_routing_2) >= len(non_routing_1)
 
         # Add more
         pipeline.session_manager.add_tools("s1", ["obsidian__read"])
         tools_3 = await pipeline.get_tools_for_list("s1")
-        assert len(tools_3) >= len(tools_2)
+        non_routing_3 = [t for t in tools_3 if t.name != "request_tool"]
+        assert len(non_routing_3) >= len(non_routing_2)

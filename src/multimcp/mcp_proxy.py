@@ -374,6 +374,34 @@ class MCPProxyServer(server.Server):
         tool_item = self.tool_to_server.get(tool_name)
         arguments = req.params.arguments or {}
 
+        # Routing tool dispatch — must come before trigger manager and registry lookup
+        try:
+            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_KEY, handle_routing_call
+            _has_routing = True
+        except ImportError:
+            _has_routing = False
+
+        if _has_routing and tool_name == ROUTING_TOOL_KEY:
+            name = arguments.get("name", "")
+            describe = bool(arguments.get("describe", False))
+            call_args = arguments.get("arguments", {})
+            content = handle_routing_call(name, describe, call_args, self.tool_to_server)
+            if (
+                content
+                and hasattr(content[0], "text")
+                and content[0].text.startswith("__PROXY_CALL__:")
+            ):
+                # Proxy call: strip sentinel and forward to the actual tool
+                actual_tool_name = content[0].text.split(":", 1)[1]
+                proxy_req = types.CallToolRequest(
+                    method="tools/call",
+                    params=types.CallToolRequestParams(
+                        name=actual_tool_name, arguments=call_args
+                    ),
+                )
+                return await self._call_tool(proxy_req)
+            return types.ServerResult(content=content)
+
         # Check for keyword triggers and auto-enable matching servers
         message = {
             "jsonrpc": "2.0",

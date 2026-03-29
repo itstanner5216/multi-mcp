@@ -104,9 +104,10 @@ class TestProxyPipelineIntegration:
         )
         pipeline.tool_registry = proxy.tool_to_server
         result = await proxy._list_tools(None)
-        # Only anchor tool returned
-        assert len(result.root.tools) == 1
-        assert result.root.tools[0].name == "github__get_me"
+        # Anchor tool + routing tool for demoted exa__search
+        non_routing = [t for t in result.root.tools if t.name != "request_tool"]
+        assert len(non_routing) == 1
+        assert non_routing[0].name == "github__get_me"
 
     @pytest.mark.asyncio
     async def test_pipeline_attribute_exists_after_init(self):

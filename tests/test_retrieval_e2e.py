@@ -124,8 +124,10 @@ class TestEndToEndRetrieval:
         )
 
         tools = await pipeline.get_tools_for_list("new-session")
-        assert len(tools) == 1
-        assert tools[0].name == "get_me"
+        # With routing tool enabled (default), anchor + routing tool for demoted tools
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 1
+        assert non_routing[0].name == "get_me"
 
     @pytest.mark.asyncio
     async def test_disclosed_tools_ranked_and_tiered(self):
@@ -164,10 +166,12 @@ class TestEndToEndRetrieval:
         pipeline.session_manager.add_tools("s1", disclosed)
 
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 8
+        # 8 active tools + routing tool for the 10 demoted tools (18 total - 8 active)
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 8
 
         # Top 3 should have full descriptions
-        for t in tools[:3]:
+        for t in non_routing[:3]:
             assert t.description is not None
 
     @pytest.mark.asyncio
