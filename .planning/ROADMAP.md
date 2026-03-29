@@ -5,7 +5,7 @@
 | # | Phase | Goal | Requirements | Success Criteria |
 |---|-------|------|--------------|------------------|
 | 1 | Foundations | BMXF scorer in shadow, all existing tests pass | SCORE-01–04, CATALOG-01–04, WIRE-01–02, TEST-01–02 | 3 |
-| 2 | Safe Lexical MVP | 1/3 | In Progress|  |
+| 2 | Safe Lexical MVP | 2/3 | In Progress|  |
 | 3 | Turn-by-Turn Adaptive | Describe rate improves; churn bounded; p95 <50ms | FUSION-01–03, SESSION-01–04, TELEM-05, TEST-05–06 | 4 |
 | 4 | Rollout Hardening | All rollout gates pass in shadow; alerting complete | Migration flags, shadow→canary controls, dashboards, replay gate | 3 |
 | 5 | Post-GA Learning | PPMI-weighted scoring; exploration injection | v2 requirements (PPMI, exploration, co-occurrence) | 2 |
@@ -50,10 +50,10 @@ Plans:
 
 **Requirements:** TELEM-01, TELEM-02, TELEM-03, TELEM-04, ROUTER-01, ROUTER-02, ROUTER-03, ROUTER-04, FALLBACK-01, FALLBACK-02, OBS-01, OBS-02, TEST-03, TEST-04
 
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
-- [ ] 02-01-PLAN.md — Telemetry subpackage (scanner, evidence, tokens) + test_telemetry_scanner.py
+- [x] 02-01-PLAN.md — Telemetry subpackage (scanner, evidence, tokens) + test_telemetry_scanner.py
 - [x] 02-02-PLAN.md — RoutingTool + assembler routing-tool tier + test_routing_tool.py
 - [ ] 02-03-PLAN.md — FileRetrievalLogger + pipeline bounded-K + mcp_proxy routing dispatch
 

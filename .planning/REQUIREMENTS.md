@@ -25,10 +25,10 @@
 
 ### Telemetry & Root Scanning (TELEM)
 
-- [ ] **TELEM-01**: System implements `telemetry/scanner.py` that scans declared MCP roots within allowlist (manifests, lockfiles, CI, containers, VCS state, README first 40 lines)
-- [ ] **TELEM-02**: System extracts typed sparse tokens (`manifest:Cargo.toml(3.0)`, `lang:rust(2.0)`, `ci:github-actions(1.5)`) into `RootEvidence` and `WorkspaceEvidence` dataclasses
-- [ ] **TELEM-03**: System enforces scan limits: max depth 6, max 10K entries, 150ms hard timeout per root
-- [ ] **TELEM-04**: System denies reading `.env*`, SSH keys, cloud credentials, arbitrary source files, or anything outside declared roots
+- [x] **TELEM-01**: System implements `telemetry/scanner.py` that scans declared MCP roots within allowlist (manifests, lockfiles, CI, containers, VCS state, README first 40 lines)
+- [x] **TELEM-02**: System extracts typed sparse tokens (`manifest:Cargo.toml(3.0)`, `lang:rust(2.0)`, `ci:github-actions(1.5)`) into `RootEvidence` and `WorkspaceEvidence` dataclasses
+- [x] **TELEM-03**: System enforces scan limits: max depth 6, max 10K entries, 150ms hard timeout per root
+- [x] **TELEM-04**: System denies reading `.env*`, SSH keys, cloud credentials, arbitrary source files, or anything outside declared roots
 - [ ] **TELEM-05**: System implements `telemetry/monitor.py` with adaptive polling (5s → 10s → 20s → 30s) and significance threshold (cumulative ≥ 0.7 triggers re-score)
 
 ### Routing Tool (ROUTER)
@@ -63,7 +63,7 @@
 
 - [ ] **TEST-01**: `test_bmx_retriever.py` — unit tests for `BMXFRetriever` covering `rebuild_index`, `search_fields`, BMXF field weights
 - [ ] **TEST-02**: `test_catalog_snapshot.py` — snapshot creation, versioning, schema_hash stability
-- [ ] **TEST-03**: `test_telemetry_scanner.py` — allowlist enforcement, scan budget limits, typed token extraction
+- [x] **TEST-03**: `test_telemetry_scanner.py` — allowlist enforcement, scan budget limits, typed token extraction
 - [x] **TEST-04**: `test_routing_tool.py` — routing tool registration, `name` lookup, `describe` response
 - [ ] **TEST-05**: `test_session_promote_demote.py` — promote/demote hysteresis, session isolation
 - [ ] **TEST-06**: `test_rrf_fusion.py` — weighted RRF correctness, alpha-decay at turns 0/1/5/10

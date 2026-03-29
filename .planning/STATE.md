@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 status: unknown
-stopped_at: "Completed 02-02-PLAN.md: routing_tool.py + TieredAssembler routing_tool_schema param"
-last_updated: "2026-03-29T03:10:10.677Z"
+stopped_at: "Completed 02-01-PLAN.md: telemetry subpackage (scanner, tokens, evidence) + 42 tests"
+last_updated: "2026-03-29T03:30:00.000Z"
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 5
-  completed_plans: 1
+  completed_plans: 2
 ---
 
 # Project State
@@ -40,8 +40,8 @@ Goal: Bounded turn-zero active set derived from roots. No full-catalog exposure.
 
 ## Session Continuity
 
-Last session: 2026-03-29T03:10:10.674Z
-Stopped at: Completed 02-02-PLAN.md: routing_tool.py + TieredAssembler routing_tool_schema param
+Last session: 2026-03-29T03:30:00.000Z
+Stopped at: Completed 02-01-PLAN.md: telemetry subpackage (scanner, tokens, evidence) + 42 tests
 
 ## Context Notes
 
@@ -60,3 +60,6 @@ Stopped at: Completed 02-02-PLAN.md: routing_tool.py + TieredAssembler routing_t
 | 2026-03-28 | BMXF field weighting (5 sub-indexes) | 5-10% accuracy on name/namespace — strongest retrieval signal in tool corpus |
 | 2026-03-28 | Shadow mode mandatory before enabling | Safe migration; existing behavior preserved until metrics confirm improvement |
 | 2026-03-28 | Conservative K=15-20 | Lean context window; routing tool as safety net for missed tools |
+| 2026-03-29 | Re-export RootEvidence/WorkspaceEvidence from models.py | canonical source stays in models.py; evidence.py is a re-export shim |
+| 2026-03-29 | Family cap applied against original total (not post-cap) | simpler, avoids iterative convergence; 35% of original total per family |
+| 2026-03-29 | Confidence = min(1.0, unique_families/3) | 3 distinct signal families as heuristic for rich workspace context |
