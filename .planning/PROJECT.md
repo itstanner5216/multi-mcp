@@ -64,17 +64,17 @@ A code-grounded implementation of roots-anchored BMXF tool retrieval for the Mul
 - ✓ `RetrievalConfig` with `enabled` kill switch — existing
 - ✓ `SessionStateManager` — existing session management
 - ✓ `RetrievalLogger` ABC, `NullLogger` — existing observability hooks
+- ✓ MCP roots telemetry scanning (allowlisted, bounded) — Validated in Phase 2: Safe Lexical MVP
+- ✓ Bounded fallback ladder (6 tiers, max exposed = 20) — Validated in Phase 2: Safe Lexical MVP
+- ✓ Routing tool registered as synthetic MCP tool — Validated in Phase 2: Safe Lexical MVP
+- ✓ `FileRetrievalLogger` implementing `RetrievalLogger` ABC — Validated in Phase 2: Safe Lexical MVP
 
 ### Active
 
 - [ ] BMXF retriever implementing `ToolRetriever` ABC
 - [ ] `ToolCatalogSnapshot` with versioning and `schema_hash`
-- [ ] MCP roots telemetry scanning (allowlisted, bounded)
-- [ ] Bounded fallback ladder (6 tiers, max exposed = 20)
-- [ ] Routing tool registered as synthetic MCP tool
 - [ ] Turn-by-turn RRF fusion with alpha-decay
 - [ ] Promote/demote hysteresis (replaces monotonic guarantee)
-- [ ] `FileRetrievalLogger` implementing `RetrievalLogger` ABC
 - [ ] Shadow mode and feature flags in `RetrievalConfig`
 - [ ] Test suite parallel to existing naming conventions
 
