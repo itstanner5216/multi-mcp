@@ -127,8 +127,10 @@ class TestPipelineEnabled:
             tool_registry=registry,
         )
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 1
-        assert tools[0].name == "get_me"
+        # With routing tool enabled (default), anchor + routing tool for demoted exa__search
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 1
+        assert non_routing[0].name == "get_me"
 
     @pytest.mark.asyncio
     async def test_disclosed_tools_appear(self):
@@ -153,7 +155,9 @@ class TestPipelineEnabled:
         pipeline.session_manager.get_or_create_session("s1")
         pipeline.session_manager.add_tools("s1", ["exa__search"])
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 2
+        # Both tools now active, no demoted tools, no routing tool added
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 2
 
     @pytest.mark.asyncio
     async def test_enabled_includes_disconnected_anchors(self):
@@ -174,8 +178,10 @@ class TestPipelineEnabled:
             tool_registry=registry,
         )
         tools = await pipeline.get_tools_for_list("s1")
-        assert len(tools) == 2  # Both connected and cached/disconnected anchors
-        tool_names = {t.name for t in tools}
+        # Both anchors active, no demoted tools, no routing tool
+        non_routing = [t for t in tools if t.name != "request_tool"]
+        assert len(non_routing) == 2  # Both connected and cached/disconnected anchors
+        tool_names = {t.name for t in non_routing}
         assert tool_names == {"get_me", "tool"}
 
     @pytest.mark.asyncio
@@ -265,7 +271,10 @@ class TestPipelineSessionLifecycle:
         tools1 = await pipeline.get_tools_for_list("s1")
         # Second call reuses session
         tools2 = await pipeline.get_tools_for_list("s1")
-        assert len(tools1) == len(tools2) == 1
+        # Only 1 tool in registry (the anchor), no demoted tools, no routing tool
+        non_routing1 = [t for t in tools1 if t.name != "request_tool"]
+        non_routing2 = [t for t in tools2 if t.name != "request_tool"]
+        assert len(non_routing1) == len(non_routing2) == 1
 
     @pytest.mark.asyncio
     async def test_different_sessions_independent(self):
@@ -290,5 +299,9 @@ class TestPipelineSessionLifecycle:
         # Session 2 doesn't
         tools_s1 = await pipeline.get_tools_for_list("s1")
         tools_s2 = await pipeline.get_tools_for_list("s2")
-        assert len(tools_s1) == 2
-        assert len(tools_s2) == 1
+        # s1: both tools active, no demoted, no routing tool → 2 non-routing
+        non_routing_s1 = [t for t in tools_s1 if t.name != "request_tool"]
+        assert len(non_routing_s1) == 2
+        # s2: 1 anchor active, 1 demoted (exa__search) → routing tool added
+        non_routing_s2 = [t for t in tools_s2 if t.name != "request_tool"]
+        assert len(non_routing_s2) == 1
