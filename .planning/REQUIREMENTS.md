@@ -18,10 +18,10 @@
 
 ### Session Routing State (SESSION)
 
-- [ ] **SESSION-01**: System defines `SessionRoutingState` dataclass replacing monotonic guarantee with promote/demote hysteresis
-- [ ] **SESSION-02**: System promotes tools when rank within K-2 OR used via router 2/3 last turns
-- [ ] **SESSION-03**: System demotes tools only when rank below K+3 for 2 consecutive turns (max 3 demotions per turn)
-- [ ] **SESSION-04**: System maintains session isolation — `SessionRoutingState` is never shared across sessions
+- [x] **SESSION-01**: System defines `SessionRoutingState` dataclass replacing monotonic guarantee with promote/demote hysteresis
+- [x] **SESSION-02**: System promotes tools when rank within K-2 OR used via router 2/3 last turns
+- [x] **SESSION-03**: System demotes tools only when rank below K+3 for 2 consecutive turns (max 3 demotions per turn)
+- [x] **SESSION-04**: System maintains session isolation — `SessionRoutingState` is never shared across sessions
 
 ### Telemetry & Root Scanning (TELEM)
 
@@ -45,8 +45,8 @@
 
 ### Fusion & Dynamic K (FUSION)
 
-- [ ] **FUSION-01**: System implements weighted RRF in `fusion.py`: `final_rrf(tool) = α/(10+rank_env(t)) + (1-α)/(10+rank_conv(t))`
-- [ ] **FUSION-02**: System applies alpha-decay: `α = max(0.15, 0.85 · e^(-0.25·turn))` with overrides for explicit tool name (α=0.15) and roots change (α=0.80)
+- [x] **FUSION-01**: System implements weighted RRF in `fusion.py`: `final_rrf(tool) = α/(10+rank_env(t)) + (1-α)/(10+rank_conv(t))`
+- [x] **FUSION-02**: System applies alpha-decay: `α = max(0.15, 0.85 · e^(-0.25·turn))` with overrides for explicit tool name (α=0.15) and roots change (α=0.80)
 - [ ] **FUSION-03**: System uses dynamic K: base 15, +3 if polyglot workspace, cap 20
 
 ### Observability (OBS)
@@ -65,8 +65,8 @@
 - [ ] **TEST-02**: `test_catalog_snapshot.py` — snapshot creation, versioning, schema_hash stability
 - [x] **TEST-03**: `test_telemetry_scanner.py` — allowlist enforcement, scan budget limits, typed token extraction
 - [x] **TEST-04**: `test_routing_tool.py` — routing tool registration, `name` lookup, `describe` response
-- [ ] **TEST-05**: `test_session_promote_demote.py` — promote/demote hysteresis, session isolation
-- [ ] **TEST-06**: `test_rrf_fusion.py` — weighted RRF correctness, alpha-decay at turns 0/1/5/10
+- [x] **TEST-05**: `test_session_promote_demote.py` — promote/demote hysteresis, session isolation
+- [x] **TEST-06**: `test_rrf_fusion.py` — weighted RRF correctness, alpha-decay at turns 0/1/5/10
 
 ## v2 Requirements (Deferred)
 
