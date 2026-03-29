@@ -2,15 +2,9 @@
 
 from __future__ import annotations
 
-import time
-from unittest.mock import patch
-
 import pytest
 
 from src.multimcp.retrieval.metrics import (
-    ALERT_DESCRIBE_RATE,
-    ALERT_P95_MS,
-    ALERT_TIER56_RATE,
     AlertChecker,
     MetricSnapshot,
     RollingMetrics,
