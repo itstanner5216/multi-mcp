@@ -14,6 +14,12 @@ from .session import SessionStateManager
 
 # Optional imports — these are injected when wiring is complete
 try:
+    from .fusion import weighted_rrf as _weighted_rrf, compute_alpha as _compute_alpha  # noqa: F401
+    _HAS_FUSION = True
+except ImportError:
+    _HAS_FUSION = False
+
+try:
     from .routing_tool import build_routing_tool_schema
     _HAS_ROUTING_TOOL = True
 except ImportError:
