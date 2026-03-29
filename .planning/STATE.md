@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 04
 status: Executing Phase 04
-stopped_at: "Completed 04-01-PLAN.md: Canary rollout foundation — SHA-256 bucket assignment, rollout stages, 16 tests"
-last_updated: "2026-03-29T18:16:04.069Z"
+stopped_at: "Completed 04-03-PLAN.md: Canary routing in pipeline + log_alert() + 10 canary tests, 958 tests passing"
+last_updated: "2026-03-29T18:29:42.893Z"
 progress:
   total_phases: 6
   completed_phases: 2
   total_plans: 17
-  completed_plans: 9
+  completed_plans: 10
 ---
 
 # Project State
@@ -41,8 +41,8 @@ Goal: Per-session turn tracking, dynamic K (FUSION-03), RRF fusion blend in pipe
 
 ## Session Continuity
 
-Last session: 2026-03-29T18:16:04.065Z
-Stopped at: Completed 04-01-PLAN.md: Canary rollout foundation — SHA-256 bucket assignment, rollout stages, 16 tests
+Last session: 2026-03-29T18:29:42.889Z
+Stopped at: Completed 04-03-PLAN.md: Canary routing in pipeline + log_alert() + 10 canary tests, 958 tests passing
 
 ## Context Notes
 
@@ -74,3 +74,6 @@ Stopped at: Completed 04-01-PLAN.md: Canary rollout foundation — SHA-256 bucke
 | 2026-03-29 | SHA-256 over MD5 for canary bucket hashing (04-01) | Functionally equivalent for A/B assignment; avoids security scanner false positives on MD5 |
 | 2026-03-29 | canary_percentage range 0.0-100.0 not 0.0-1.0 (04-01) | Human-readable operator config; plan spec |
 | 2026-03-29 | Rollout guard: shadow->control, ga->canary, canary->hash-based (04-01) | Deterministic stage dispatch; safe default is shadow=control |
+| 2026-03-29 | shadow mode (default) returns all tools — tests use rollout_stage=ga for filtering (04-03) | Shadow=passthrough is backward compatible; filtering tests must explicitly opt-in to ga mode |
+| 2026-03-29 | is_filtered flag gates bounded active set vs passthrough in get_tools_for_list (04-03) | Single branch point for canary routing keeps logic readable |
+| 2026-03-29 | FileRetrievalLogger.log_alert uses lazy import time as _time (04-03) | Avoids module-level name collision; consistent with existing patterns |
