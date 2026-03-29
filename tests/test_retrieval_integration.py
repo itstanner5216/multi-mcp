@@ -82,6 +82,7 @@ class TestProxyPipelineIntegration:
         config = RetrievalConfig(
             enabled=True,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         pipeline = RetrievalPipeline(
             retriever=PassthroughRetriever(),

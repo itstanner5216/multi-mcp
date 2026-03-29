@@ -108,6 +108,7 @@ class TestEndToEndRetrieval:
             top_k=5,
             full_description_count=3,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         registry = _build_large_registry()
         retriever = KeywordRetriever(config)
@@ -136,6 +137,7 @@ class TestEndToEndRetrieval:
             top_k=10,
             full_description_count=3,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         registry = _build_large_registry()
         retriever = KeywordRetriever(config)

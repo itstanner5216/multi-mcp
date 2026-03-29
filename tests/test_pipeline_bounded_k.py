@@ -57,6 +57,7 @@ def make_pipeline(registry: dict, max_k: int = 5, enable_routing_tool: bool = Tr
         max_k=max_k,
         enable_routing_tool=enable_routing_tool,
         full_description_count=10,
+        rollout_stage="ga",
     )
     session_mgr = SessionStateManager(config=config)
     if logger is None:

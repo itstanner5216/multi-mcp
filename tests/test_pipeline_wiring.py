@@ -38,6 +38,7 @@ class TestPipelineWithRankerAndAssembler:
             enabled=True,
             full_description_count=2,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         long_desc = "This is a comprehensive tool for searching across all repositories with advanced filtering and pagination"
         registry = {
@@ -80,6 +81,7 @@ class TestPipelineWithRankerAndAssembler:
         config = RetrievalConfig(
             enabled=True,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         registry = {
             "github__get_me": _make_mapping("github", _make_tool("get_me")),
@@ -105,6 +107,7 @@ class TestPipelineWithRankerAndAssembler:
         config = RetrievalConfig(
             enabled=True,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         registry = {
             "github__get_me": _make_mapping("github", _make_tool("get_me")),

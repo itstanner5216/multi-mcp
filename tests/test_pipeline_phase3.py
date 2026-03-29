@@ -198,7 +198,7 @@ class TestDynamicK:
     @pytest.mark.asyncio
     async def test_default_max_k_20_stays_20(self):
         """max_k=20 (default): base_k=max(15,20)=20, polyglot_bonus=0, result=20."""
-        config = RetrievalConfig(enabled=True, max_k=20)
+        config = RetrievalConfig(enabled=True, max_k=20, rollout_stage="ga")
         # Create 25 tools to test cap
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
@@ -216,7 +216,7 @@ class TestDynamicK:
     @pytest.mark.asyncio
     async def test_max_k_10_bumped_to_base_15(self):
         """max_k=10: base_k=max(15,10)=15, polyglot_bonus=0, result=15."""
-        config = RetrievalConfig(enabled=True, max_k=10)
+        config = RetrievalConfig(enabled=True, max_k=10, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(20)
@@ -233,7 +233,7 @@ class TestDynamicK:
     @pytest.mark.asyncio
     async def test_max_k_18_adds_polyglot_bonus(self):
         """max_k=18 (>17): base_k=max(15,18)=18, polyglot_bonus=3, min(20,21)=20."""
-        config = RetrievalConfig(enabled=True, max_k=18)
+        config = RetrievalConfig(enabled=True, max_k=18, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(25)
@@ -248,7 +248,7 @@ class TestDynamicK:
     @pytest.mark.asyncio
     async def test_max_k_less_than_15_uses_15(self):
         """max_k=5: base_k=max(15,5)=15, no polyglot. Never expose fewer than 15."""
-        config = RetrievalConfig(enabled=True, max_k=5)
+        config = RetrievalConfig(enabled=True, max_k=5, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(20)

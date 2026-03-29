@@ -39,6 +39,15 @@ except ImportError:
     weighted_rrf = None  # type: ignore[assignment]
     compute_alpha = None  # type: ignore[assignment]
 
+try:
+    from .rollout import get_session_group
+    _HAS_ROLLOUT = True
+except ImportError:
+    _HAS_ROLLOUT = False
+
+    def get_session_group(session_id: str, config: object) -> str:  # type: ignore[misc]
+        return "control"
+
 if TYPE_CHECKING:
     from src.multimcp.mcp_proxy import ToolMapping
 
@@ -75,10 +84,21 @@ class RetrievalPipeline:
         When disabled: returns ALL tools including cached/disconnected (client=None).
         When enabled: returns only tools in the session's active set, bounded by max_k.
         """
+        # Master kill switch — enabled=False always returns all tools
         if not self.config.enabled:
             return [m.tool for m in self.tool_registry.values()]
 
         t0 = time.monotonic()
+
+        # Determine session group for canary routing
+        group = get_session_group(session_id, self.config)
+
+        # Shadow mode: score but return all tools (backward compatible)
+        # Control sessions in canary mode also get all tools
+        is_filtered = (
+            self.config.rollout_stage == "ga"
+            or (self.config.rollout_stage == "canary" and group == "canary")
+        )
 
         # Ensure session exists
         self.session_manager.get_or_create_session(session_id)
@@ -87,18 +107,14 @@ class RetrievalPipeline:
         all_registry_keys = list(self.tool_registry.keys())
 
         # Dynamic K (FUSION-03): base 15, +3 if polyglot (max_k>17 proxy), cap at 20.
-        # Routing tool is counted within dynamic_k (reserve 1 slot when routing enabled).
         polyglot_bonus = 3 if self.config.max_k > 17 else 0
         dynamic_k = min(20, max(15, self.config.max_k) + polyglot_bonus)
-        # Reserve one slot for the routing tool so total(direct + routing) <= dynamic_k
         if self.config.enable_routing_tool and _HAS_ROUTING_TOOL:
             direct_k = max(1, dynamic_k - 1)
         else:
             direct_k = dynamic_k
 
         if not active_keys:
-            # Fresh session: seed with raw config.max_k (not the floor) so that
-            # explicit small K values are respected for initial tool exposure.
             active_keys = set(sorted(all_registry_keys)[:self.config.max_k])
 
         active_keys_list = sorted(active_keys)[:direct_k]
@@ -110,11 +126,11 @@ class RetrievalPipeline:
             if k in self.tool_registry
         ]
 
-        # Compute demoted IDs (all registry keys NOT in active set)
+        # Compute demoted IDs
         active_key_set = {k for k, _ in active_mappings}
         demoted_ids = [k for k in all_registry_keys if k not in active_key_set]
 
-        # Tier 6 bounded fallback: if active_mappings is empty, use top-30 static defaults
+        # Tier 6 bounded fallback
         if not active_mappings:
             fallback_keys = sorted(all_registry_keys)[:30]
             active_mappings = [
@@ -124,31 +140,33 @@ class RetrievalPipeline:
             ]
             demoted_ids = []
 
-        # Build routing tool schema (if enabled and there are demoted tools)
-        routing_schema = None
-        if self.config.enable_routing_tool and demoted_ids and _HAS_ROUTING_TOOL:
-            routing_schema = build_routing_tool_schema(demoted_ids)
+        if is_filtered:
+            # CANARY/GA: return bounded active set + routing tool
+            routing_schema = None
+            if self.config.enable_routing_tool and demoted_ids and _HAS_ROUTING_TOOL:
+                routing_schema = build_routing_tool_schema(demoted_ids)
 
-        # Build tool list from active mappings
-        scored_tools = [
-            ScoredTool(tool_key=k, tool_mapping=m, score=1.0)
-            for k, m in active_mappings
-        ]
+            scored_tools = [
+                ScoredTool(tool_key=k, tool_mapping=m, score=1.0)
+                for k, m in active_mappings
+            ]
 
-        # Assemble with ranker+assembler if wired, else raw fallback
-        if self.ranker is not None and self.assembler is not None:
-            ranked = self.ranker.rank(scored_tools)
-            result = self.assembler.assemble(
-                ranked, self.config, routing_tool_schema=routing_schema
-            )
+            if self.ranker is not None and self.assembler is not None:
+                ranked = self.ranker.rank(scored_tools)
+                result = self.assembler.assemble(
+                    ranked, self.config, routing_tool_schema=routing_schema
+                )
+            else:
+                result = [m.tool for _, m in active_mappings]
+                if routing_schema is not None:
+                    result.append(routing_schema)
         else:
-            result = [m.tool for _, m in active_mappings]
-            if routing_schema is not None:
-                result.append(routing_schema)
+            # SHADOW/CONTROL: return all tools (passthrough)
+            result = [m.tool for m in self.tool_registry.values()]
 
         latency_ms = (time.monotonic() - t0) * 1000.0
 
-        # Emit RankingEvent (OBS-02)
+        # Emit RankingEvent with group label (OBS-02)
         event = RankingEvent(
             session_id=session_id,
             turn_number=self._session_turns.get(session_id, 0),
@@ -158,6 +176,7 @@ class RetrievalPipeline:
             active_tool_ids=[k for k, _ in active_mappings],
             router_enum_size=len(demoted_ids),
             scorer_latency_ms=latency_ms,
+            group=group,
         )
         await self.logger.log_ranking_event(event)
 

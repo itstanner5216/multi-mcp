@@ -112,6 +112,7 @@ class TestPipelineEnabled:
         config = RetrievalConfig(
             enabled=True,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         tool_get_me = _make_tool("get_me")
         tool_search = _make_tool("search")
@@ -281,6 +282,7 @@ class TestPipelineSessionLifecycle:
         config = RetrievalConfig(
             enabled=True,
             anchor_tools=["github__get_me"],
+            rollout_stage="ga",
         )
         registry = {
             "github__get_me": _make_mapping("github", _make_tool("get_me")),
