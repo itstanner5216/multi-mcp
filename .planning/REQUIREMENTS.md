@@ -86,6 +86,15 @@
 - K > 20 — Explicit non-goal per synthesized plan
 - Full-catalog direct exposure — Core safety invariant
 
+## Verification & Compliance (VERIFY)
+
+- [ ] **VERIFY-01**: No code path in pipeline.py or mcp_proxy.py can expose more than 20 tools directly — tested with registries of 25, 50, 100, 168, 500 tools across all rollout stages
+- [ ] **VERIFY-02**: Telemetry scanner cannot read outside declared roots — tested with symlinks escaping root, path traversal (`../`), denied patterns (`.env`, `*.pem`, `id_rsa`)
+- [ ] **VERIFY-03**: Active set does not change during a model turn — tested by calling `get_tools_for_list()` twice within same turn and asserting identical results
+- [ ] **VERIFY-04**: Every turn is pinned to one `ToolCatalogSnapshot.version` — tested by mutating registry mid-session and verifying snapshot version doesn't change until turn boundary
+- [ ] **VERIFY-05**: `SessionRoutingState` is never shared across concurrent sessions — tested with 10 concurrent sessions verifying no state cross-contamination
+- [ ] **VERIFY-06**: Every fallback tier (1–6) produces a bounded, valid active set — tested by forcing each tier condition and asserting 0 < len(tools) <= 30 and routing tool present when demoted tools exist
+
 ## Traceability
 
 | Phase | Requirements Covered |
@@ -95,3 +104,4 @@
 | Phase 2: Turn-by-Turn Adaptive | FUSION-01–03, SESSION-01–04, TELEM-05, TEST-05–06 |
 | Phase 3: Rollout Hardening | Migration flags, alerting, dashboards |
 | Phase 4: Post-GA Learning | v2 requirements above |
+| Phase 5: Verification & Compliance | VERIFY-01–06 |

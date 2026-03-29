@@ -129,3 +129,15 @@ Each task was committed atomically:
 ---
 *Phase: 04-rollout-hardening*
 *Completed: 2026-03-29*
+
+## Self-Check: PASSED
+
+- FOUND: src/multimcp/retrieval/pipeline.py
+- FOUND: src/multimcp/retrieval/logging.py
+- FOUND: tests/test_canary_pipeline.py
+- FOUND: .planning/phases/04-rollout-hardening/04-03-SUMMARY.md
+- FOUND commit 7d4215e (Task 1: canary routing)
+- FOUND commit 41f64e0 (Task 2: log_alert)
+- FOUND commit 3b8b97b (Task 3: test_canary_pipeline.py)
+- FOUND commit a4c2b60 (docs: SUMMARY + STATE + ROADMAP)
+- Tests: 958 passed, 0 failed
