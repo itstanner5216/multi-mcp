@@ -43,6 +43,14 @@ class RetrievalLogger(ABC):
     @abstractmethod
     async def log_ranking_event(self, event: "RankingEvent") -> None: ...
 
+    @abstractmethod
+    async def log_alert(
+        self,
+        alert_name: str,
+        message: str,
+        details: dict[str, object] | None = None,
+    ) -> None: ...
+
 
 class NullLogger(RetrievalLogger):
     """No-op logger. Default when no logger configured."""
@@ -71,6 +79,14 @@ class NullLogger(RetrievalLogger):
         pass
 
     async def log_ranking_event(self, event: "RankingEvent") -> None:
+        pass
+
+    async def log_alert(
+        self,
+        alert_name: str,
+        message: str,
+        details: dict[str, object] | None = None,
+    ) -> None:
         pass
 
 
@@ -111,3 +127,20 @@ class FileRetrievalLogger(RetrievalLogger):
         tool_b: str,
     ) -> None:
         pass
+
+    async def log_alert(
+        self,
+        alert_name: str,
+        message: str,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        import time as _time
+        record = {
+            "type": "alert",
+            "alert_name": alert_name,
+            "message": message,
+            "details": details or {},
+            "timestamp": _time.time(),
+        }
+        with open(self._path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, default=str) + "\n")
