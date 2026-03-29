@@ -33,10 +33,10 @@
 
 ### Routing Tool (ROUTER)
 
-- [ ] **ROUTER-01**: System implements `routing_tool.py` as synthetic MCP tool registered via `_register_request_handlers()` in `MCPProxyServer`
-- [ ] **ROUTER-02**: Routing tool accepts `name` (exact tool lookup) and optional `describe` (return description) parameters per `PHASE2-PLAN.md` contract
-- [ ] **ROUTER-03**: Routing tool enum lists namespace-grouped, env-relevance ordered demoted tools
-- [ ] **ROUTER-04**: System never directly exposes more than 20 tools simultaneously; all tools beyond active set are accessible only through routing tool
+- [x] **ROUTER-01**: System implements `routing_tool.py` as synthetic MCP tool registered via `_register_request_handlers()` in `MCPProxyServer`
+- [x] **ROUTER-02**: Routing tool accepts `name` (exact tool lookup) and optional `describe` (return description) parameters per `PHASE2-PLAN.md` contract
+- [x] **ROUTER-03**: Routing tool enum lists namespace-grouped, env-relevance ordered demoted tools
+- [x] **ROUTER-04**: System never directly exposes more than 20 tools simultaneously; all tools beyond active set are accessible only through routing tool
 
 ### Fallback Ladder (FALLBACK)
 
@@ -64,7 +64,7 @@
 - [ ] **TEST-01**: `test_bmx_retriever.py` — unit tests for `BMXFRetriever` covering `rebuild_index`, `search_fields`, BMXF field weights
 - [ ] **TEST-02**: `test_catalog_snapshot.py` — snapshot creation, versioning, schema_hash stability
 - [ ] **TEST-03**: `test_telemetry_scanner.py` — allowlist enforcement, scan budget limits, typed token extraction
-- [ ] **TEST-04**: `test_routing_tool.py` — routing tool registration, `name` lookup, `describe` response
+- [x] **TEST-04**: `test_routing_tool.py` — routing tool registration, `name` lookup, `describe` response
 - [ ] **TEST-05**: `test_session_promote_demote.py` — promote/demote hysteresis, session isolation
 - [ ] **TEST-06**: `test_rrf_fusion.py` — weighted RRF correctness, alpha-decay at turns 0/1/5/10
 
