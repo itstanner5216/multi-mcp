@@ -40,8 +40,8 @@
 
 ### Fallback Ladder (FALLBACK)
 
-- [ ] **FALLBACK-01**: System implements 6-tier bounded fallback ladder — never exposes full catalog at any tier
-- [ ] **FALLBACK-02**: Terminal fallback (Tier 6) exposes conservative top-30 static defaults, not full `tool_to_server` registry
+- [x] **FALLBACK-01**: System implements 6-tier bounded fallback ladder — never exposes full catalog at any tier
+- [x] **FALLBACK-02**: Terminal fallback (Tier 6) exposes conservative top-30 static defaults, not full `tool_to_server` registry
 
 ### Fusion & Dynamic K (FUSION)
 
@@ -51,8 +51,8 @@
 
 ### Observability (OBS)
 
-- [ ] **OBS-01**: System implements `FileRetrievalLogger` extending existing `RetrievalLogger` ABC with JSONL per-turn `RankingEvent` logging
-- [ ] **OBS-02**: System emits `RankingEvent` per turn with: `session_id`, `turn_number`, `catalog_version`, `workspace_hash`, `alpha`, `active_k`, `fallback_tier`, `active_tool_ids`, `router_enum_size`, `scorer_latency_ms`
+- [x] **OBS-01**: System implements `FileRetrievalLogger` extending existing `RetrievalLogger` ABC with JSONL per-turn `RankingEvent` logging
+- [x] **OBS-02**: System emits `RankingEvent` per turn with: `session_id`, `turn_number`, `catalog_version`, `workspace_hash`, `alpha`, `active_k`, `fallback_tier`, `active_tool_ids`, `router_enum_size`, `scorer_latency_ms`
 
 ### Pipeline Wiring (WIRE)
 

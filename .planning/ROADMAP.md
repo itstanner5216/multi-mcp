@@ -55,7 +55,7 @@ Plans:
 Plans:
 - [x] 02-01-PLAN.md — Telemetry subpackage (scanner, evidence, tokens) + test_telemetry_scanner.py
 - [x] 02-02-PLAN.md — RoutingTool + assembler routing-tool tier + test_routing_tool.py
-- [ ] 02-03-PLAN.md — FileRetrievalLogger + pipeline bounded-K + mcp_proxy routing dispatch
+- [x] 02-03-PLAN.md — FileRetrievalLogger + pipeline bounded-K + mcp_proxy routing dispatch
 
 **New files:**
 - `src/multimcp/retrieval/telemetry/__init__.py`

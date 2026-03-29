@@ -4,13 +4,13 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02
 status: unknown
-stopped_at: "Completed 02-01-PLAN.md: telemetry subpackage (scanner, tokens, evidence) + 42 tests"
-last_updated: "2026-03-29T03:30:00.000Z"
+stopped_at: "Completed 02-03-PLAN.md: FileRetrievalLogger, bounded-K pipeline, routing tool dispatch in mcp_proxy"
+last_updated: "2026-03-29T03:41:30.000Z"
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
-  completed_plans: 2
+  completed_plans: 3
 ---
 
 # Project State
@@ -40,8 +40,8 @@ Goal: Bounded turn-zero active set derived from roots. No full-catalog exposure.
 
 ## Session Continuity
 
-Last session: 2026-03-29T03:30:00.000Z
-Stopped at: Completed 02-01-PLAN.md: telemetry subpackage (scanner, tokens, evidence) + 42 tests
+Last session: 2026-03-29T03:41:30.000Z
+Stopped at: Completed 02-03-PLAN.md: FileRetrievalLogger, bounded-K pipeline, routing tool dispatch in mcp_proxy
 
 ## Context Notes
 
@@ -63,3 +63,6 @@ Stopped at: Completed 02-01-PLAN.md: telemetry subpackage (scanner, tokens, evid
 | 2026-03-29 | Re-export RootEvidence/WorkspaceEvidence from models.py | canonical source stays in models.py; evidence.py is a re-export shim |
 | 2026-03-29 | Family cap applied against original total (not post-cap) | simpler, avoids iterative convergence; 35% of original total per family |
 | 2026-03-29 | Confidence = min(1.0, unique_families/3) | 3 distinct signal families as heuristic for rich workspace context |
+| 2026-03-29 | Lazy import ROUTING_TOOL_KEY in _call_tool() | Avoids circular import between mcp_proxy and retrieval subpackage |
+| 2026-03-29 | RankingEvent.turn_number=0 for Phase 2 | Turn tracking deferred to Phase 3 |
+| 2026-03-29 | Tier 6 fallback capped at 30 (not 20) | Wider visibility in zero-state sessions without full-registry exposure |
