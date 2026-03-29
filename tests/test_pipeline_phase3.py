@@ -135,6 +135,16 @@ class TestOnToolCalledPromote:
         assert p._session_turns.get("s1", 0) == 1
 
 
+class CapturingLogger(NullLogger):
+    """NullLogger subclass that captures RankingEvents for testing."""
+
+    def __init__(self) -> None:
+        self.events = []
+
+    async def log_ranking_event(self, event) -> None:
+        self.events.append(event)
+
+
 class TestRankingEventTurnNumber:
     """RankingEvent.turn_number uses real turn count (not hardcoded 0)."""
 
@@ -146,16 +156,7 @@ class TestRankingEventTurnNumber:
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(5)
         }
-        logger = NullLogger()
-        logged_events = []
-        original_log = logger.log_ranking_event
-
-        async def capture_event(event):
-            logged_events.append(event)
-            return await original_log(event)
-
-        logger.log_ranking_event = capture_event  # type: ignore[method-assign]
-
+        logger = CapturingLogger()
         p = RetrievalPipeline(
             retriever=PassthroughRetriever(),
             session_manager=SessionStateManager(config),
@@ -164,8 +165,8 @@ class TestRankingEventTurnNumber:
             tool_registry=registry,
         )
         await p.get_tools_for_list("s1")
-        assert len(logged_events) == 1
-        assert logged_events[0].turn_number == 0  # No on_tool_called yet
+        assert len(logger.events) == 1
+        assert logger.events[0].turn_number == 0  # No on_tool_called yet
 
     @pytest.mark.asyncio
     async def test_ranking_event_turn_number_reflects_actual_turn(self):
@@ -175,14 +176,7 @@ class TestRankingEventTurnNumber:
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(5)
         }
-        logger = NullLogger()
-        logged_events = []
-
-        async def capture_event(event):
-            logged_events.append(event)
-
-        logger.log_ranking_event = capture_event  # type: ignore[method-assign]
-
+        logger = CapturingLogger()
         p = RetrievalPipeline(
             retriever=PassthroughRetriever(),
             session_manager=SessionStateManager(config),
@@ -194,8 +188,8 @@ class TestRankingEventTurnNumber:
         await p.on_tool_called("s1", "unknown_a", {})
         await p.on_tool_called("s1", "unknown_b", {})
         await p.get_tools_for_list("s1")
-        assert len(logged_events) == 1
-        assert logged_events[0].turn_number == 2
+        assert len(logger.events) == 1
+        assert logger.events[0].turn_number == 2
 
 
 class TestDynamicK:

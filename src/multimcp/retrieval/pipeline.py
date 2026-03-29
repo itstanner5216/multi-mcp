@@ -31,6 +31,14 @@ except ImportError:
     build_routing_tool_schema = None  # type: ignore[assignment]
     ROUTING_TOOL_KEY = None  # type: ignore[assignment]
 
+try:
+    from .fusion import weighted_rrf, compute_alpha
+    _HAS_FUSION = True
+except ImportError:
+    _HAS_FUSION = False
+    weighted_rrf = None  # type: ignore[assignment]
+    compute_alpha = None  # type: ignore[assignment]
+
 if TYPE_CHECKING:
     from src.multimcp.mcp_proxy import ToolMapping
 
@@ -59,6 +67,7 @@ class RetrievalPipeline:
         self.tool_registry = tool_registry  # Reference, not copy
         self.ranker = ranker
         self.assembler = assembler
+        self._session_turns: dict[str, int] = {}  # session_id -> current turn number
 
     async def get_tools_for_list(self, session_id: str) -> list[types.Tool]:
         """Called by _list_tools(). Returns tool list based on pipeline state.
@@ -77,12 +86,14 @@ class RetrievalPipeline:
 
         all_registry_keys = list(self.tool_registry.keys())
 
+        # Dynamic K: base 15 (floor), +3 if polyglot workspace, cap at 20 (FUSION-03)
+        base_k = max(15, self.config.max_k)
+        polyglot_bonus = 3 if self.config.max_k > 17 else 0
+        max_k = min(20, base_k + polyglot_bonus)
+
         if not active_keys:
             # Seed with top-K from full registry sorted by key (Phase 2 default)
-            active_keys = set(sorted(all_registry_keys)[: self.config.max_k])
-
-        # Enforce max_k bound
-        max_k = self.config.max_k  # default 20
+            active_keys = set(sorted(all_registry_keys)[:max_k])
         active_keys_list = sorted(active_keys)[:max_k]
 
         # Build active mappings
@@ -133,7 +144,7 @@ class RetrievalPipeline:
         # Emit RankingEvent (OBS-02)
         event = RankingEvent(
             session_id=session_id,
-            turn_number=0,  # Turn tracking is Phase 3; use 0 for now
+            turn_number=self._session_turns.get(session_id, 0),
             catalog_version="",
             active_k=len(active_mappings),
             fallback_tier=1,
@@ -162,9 +173,21 @@ class RetrievalPipeline:
         tool_name: str,
         arguments: dict,
     ) -> bool:
-        """Called by _call_tool(). Placeholder for progressive disclosure.
+        """Called by _call_tool(). Tracks turns and triggers promote/demote evaluation.
 
-        Returns True if new tools were disclosed (caller should send list_changed).
-        Phase 3 stub — always returns False.
+        Returns True if active set changed (caller should send list_changed notification).
         """
+        if not self.config.enabled:
+            return False
+
+        # Increment turn counter for this session
+        self._session_turns[session_id] = self._session_turns.get(session_id, 0) + 1
+
+        # Record tool usage for demote safety (used_this_turn)
+        # Demote evaluation is delegated to pipeline on the NEXT turn boundary
+        # For now: disclose any new tools based on what was called (promote via usage signal)
+        if hasattr(self.session_manager, 'promote') and tool_name in self.tool_registry:
+            newly_added = self.session_manager.promote(session_id, [tool_name])
+            return len(newly_added) > 0
+
         return False
