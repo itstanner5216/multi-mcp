@@ -47,7 +47,7 @@
 
 - [x] **FUSION-01**: System implements weighted RRF in `fusion.py`: `final_rrf(tool) = α/(10+rank_env(t)) + (1-α)/(10+rank_conv(t))`
 - [x] **FUSION-02**: System applies alpha-decay: `α = max(0.15, 0.85 · e^(-0.25·turn))` with overrides for explicit tool name (α=0.15) and roots change (α=0.80)
-- [ ] **FUSION-03**: System uses dynamic K: base 15, +3 if polyglot workspace, cap 20
+- [x] **FUSION-03**: System uses dynamic K: base 15, +3 if polyglot workspace, cap 20
 
 ### Observability (OBS)
 

@@ -4,44 +4,44 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 03
 status: Executing Phase 03
-stopped_at: "Completed 03-03-PLAN.md: RootMonitor adaptive polling, significance threshold, debounce"
-last_updated: "2026-03-29T13:26:36.389Z"
+stopped_at: "Completed 03-04-PLAN.md: Pipeline Phase 3 wiring — turn tracking, dynamic K, fusion import"
+last_updated: "2026-03-29T14:04:33.814Z"
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 9
-  completed_plans: 6
+  completed_plans: 7
 ---
 
 # Project State
 
 ## Current Status
 
-- **Milestone:** Phase 2 — BMXF Routing
+- **Milestone:** Phase 3 — Turn-by-Turn Adaptive
 - **Current Phase:** 03
-- **Phase Status:** Not started
-- **Last Updated:** 2026-03-28
+- **Phase Status:** In Progress (4/4 plans complete)
+- **Last Updated:** 2026-03-29
 
 ## Active Phase
 
-**Phase 2: Safe Lexical MVP**
+**Phase 3: Turn-by-Turn Adaptive**
 
-Goal: Bounded turn-zero active set derived from roots. No full-catalog exposure. Recall@15 > baseline (PassthroughRetriever).
+Goal: Per-session turn tracking, dynamic K (FUSION-03), RRF fusion blend in pipeline, RootMonitor adaptive polling.
 
 ## Phase Progress
 
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | Foundations | ✅ Complete |
-| 2 | Safe Lexical MVP | 🔲 Not started |
-| 3 | Turn-by-Turn Adaptive | 🔲 Not started |
+| 2 | Safe Lexical MVP | ✅ Complete |
+| 3 | Turn-by-Turn Adaptive | ✅ Complete (4/4 plans) |
 | 4 | Rollout Hardening | 🔲 Not started |
 | 5 | Post-GA Learning | 🔲 Not started |
 
 ## Session Continuity
 
-Last session: 2026-03-29T13:26:36.386Z
-Stopped at: Completed 03-03-PLAN.md: RootMonitor adaptive polling, significance threshold, debounce
+Last session: 2026-03-29T14:04:33.810Z
+Stopped at: Completed 03-04-PLAN.md: Pipeline Phase 3 wiring — turn tracking, dynamic K, fusion import
 
 ## Context Notes
 
@@ -68,3 +68,5 @@ Stopped at: Completed 03-03-PLAN.md: RootMonitor adaptive polling, significance 
 | 2026-03-29 | Tier 6 fallback capped at 30 (not 20) | Wider visibility in zero-state sessions without full-registry exposure |
 | 2026-03-29 | demote() slices safe_to_demote[:max_per_turn] in input order | Deterministic; preserves caller's priority ordering |
 | 2026-03-29 | promote()/demote() return [] for unknown sessions | Consistent with add_tools() safe-default pattern; no exception raised |
+| 2026-03-29 | Polyglot detection via config.max_k>17 heuristic | Conservative; full WorkspaceEvidence threading deferred; lets operators opt-in via config |
+| 2026-03-29 | on_tool_called promotes tool_name if in registry (promote-on-call) | Immediate disclosure of called tool; simpler than RRF blend at call time |
