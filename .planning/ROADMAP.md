@@ -18,6 +18,12 @@
 
 **Requirements:** SCORE-01, SCORE-02, SCORE-03, SCORE-04, CATALOG-01, CATALOG-02, CATALOG-03, CATALOG-04, WIRE-01, WIRE-02, TEST-01, TEST-02
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — BMXIndex copy + BMXF wrapper + extended models.py + catalog.py
+- [ ] 01-02-PLAN.md — BMXFRetriever + __init__ exports + pipeline wiring + tests
+
 **New files:**
 - `src/multimcp/retrieval/bmx_index.py` — BMXIndex + BMXF field wrapper
 - `src/multimcp/retrieval/bmx_retriever.py` — BMXFRetriever(ToolRetriever)
