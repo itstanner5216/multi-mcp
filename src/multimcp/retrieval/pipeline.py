@@ -14,42 +14,22 @@ from .session import SessionStateManager
 
 # Optional imports — these are injected when wiring is complete
 try:
-    from .ranker import RelevanceRanker
-except ImportError:
-    RelevanceRanker = None  # type: ignore[assignment,misc]
-
-try:
-    from .assembler import TieredAssembler
-except ImportError:
-    TieredAssembler = None  # type: ignore[assignment,misc]
-
-try:
-    from .routing_tool import build_routing_tool_schema, ROUTING_TOOL_KEY
+    from .routing_tool import build_routing_tool_schema
     _HAS_ROUTING_TOOL = True
 except ImportError:
     _HAS_ROUTING_TOOL = False
     build_routing_tool_schema = None  # type: ignore[assignment]
-    ROUTING_TOOL_KEY = None  # type: ignore[assignment]
-
-try:
-    from .fusion import weighted_rrf, compute_alpha
-    _HAS_FUSION = True
-except ImportError:
-    _HAS_FUSION = False
-    weighted_rrf = None  # type: ignore[assignment]
-    compute_alpha = None  # type: ignore[assignment]
 
 try:
     from .rollout import get_session_group
-    _HAS_ROLLOUT = True
 except ImportError:
-    _HAS_ROLLOUT = False
-
-    def get_session_group(session_id: str, config: object) -> str:  # type: ignore[misc]
+    def get_session_group(session_id: str, config: "RetrievalConfig") -> str:  # type: ignore[misc]
         return "control"
 
 if TYPE_CHECKING:
     from src.multimcp.mcp_proxy import ToolMapping
+    from .ranker import RelevanceRanker
+    from .assembler import TieredAssembler
 
 
 class RetrievalPipeline:
@@ -143,7 +123,7 @@ class RetrievalPipeline:
         if is_filtered:
             # CANARY/GA: return bounded active set + routing tool
             routing_schema = None
-            if self.config.enable_routing_tool and demoted_ids and _HAS_ROUTING_TOOL:
+            if self.config.enable_routing_tool and demoted_ids and _HAS_ROUTING_TOOL and build_routing_tool_schema is not None:
                 routing_schema = build_routing_tool_schema(demoted_ids)
 
             scored_tools = [
