@@ -16,6 +16,7 @@ class RetrievalContext:
     query: str = ""
     tool_call_history: list[str] = field(default_factory=list)
     server_hint: Optional[str] = None
+    query_mode: Literal["env", "nl"] = "env"
 
 
 @dataclass
@@ -37,7 +38,7 @@ class RetrievalConfig:
     """
     # Existing fields — unchanged
     enabled: bool = False
-    top_k: int = 10
+    top_k: int = 15
     full_description_count: int = 3
     anchor_tools: list[str] = field(default_factory=list)
     # Phase 2 additions

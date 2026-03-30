@@ -31,28 +31,18 @@ logger = logging.getLogger(__name__)
 # These bridge common abbreviated server names to natural-language terms so
 # a user query like "file" also surfaces tools from a server named "fs".
 NAMESPACE_ALIASES: dict[str, list[str]] = {
-    "fs": ["file", "filesystem", "files"],
-    "git": ["version control", "vcs", "repository", "repo"],
-    "gh": ["github", "repository", "pr", "issue"],
-    "db": ["database", "sql", "query"],
-    "pg": ["postgres", "postgresql", "database"],
-    "k8s": ["kubernetes", "cluster", "pod"],
-    "aws": ["amazon", "cloud", "s3", "lambda"],
-    "gcp": ["google cloud", "gcs", "bigquery"],
-    "az": ["azure", "microsoft cloud"],
-    "slack": ["chat", "message", "notification"],
-    "jira": ["ticket", "issue", "task", "project"],
-    "linear": ["issue", "ticket", "task"],
-    "notion": ["docs", "notes", "page", "wiki"],
-    "browser": ["web", "http", "navigate", "page"],
-    "search": ["find", "lookup", "query"],
-    "fetch": ["http", "request", "get", "download"],
-    "mail": ["email", "send", "message"],
-    "cal": ["calendar", "event", "schedule"],
-    "shell": ["bash", "terminal", "command", "exec"],
-    "docker": ["container", "image", "compose"],
-    "npm": ["node", "package", "javascript"],
-    "pypi": ["python", "package", "pip"],
+    "github": ["repository", "pull_request", "issue", "git", "code_review", "branch", "commit"],
+    "brave-search": ["web_search", "internet", "lookup", "find", "query"],
+    "context7": ["documentation", "library", "docs", "api_reference", "examples"],
+    "docker": ["container", "image", "compose", "deploy", "service"],
+    "filesystem": ["file", "directory", "read", "write", "path", "folder"],
+    "shell": ["terminal", "command", "bash", "exec", "run", "process"],
+    "slack": ["message", "channel", "chat", "notification"],
+    "npm": ["package", "install", "node", "dependency"],
+    "pip": ["package", "install", "python", "dependency"],
+    "cargo": ["crate", "build", "rust", "compile"],
+    "kubectl": ["kubernetes", "pod", "deployment", "service", "cluster"],
+    "terraform": ["infrastructure", "cloud", "provision", "iac"],
 }
 
 # ACTION_ALIASES: action verbs found in tool names → synonyms.
@@ -96,6 +86,10 @@ class BMXFRetriever(ToolRetriever):
 
     def __init__(self, config: RetrievalConfig | None = None) -> None:
         self._config = config or RetrievalConfig(shadow_mode=True)
+        # Dual indexes: env uses alpha_override=0.5, nl uses auto-tune (alpha_override=None)
+        self._env_index: BMXIndex | None = None
+        self._nl_index: BMXIndex | None = None
+        # Legacy single index — kept for backward compat; same as _env_index after rebuild
         self._index: BMXIndex | None = None
         self._snapshot: ToolCatalogSnapshot | None = None
         # tool_key → ToolDoc mapping, populated by rebuild_index
@@ -111,11 +105,10 @@ class BMXFRetriever(ToolRetriever):
         """
         aliases: list[str] = []
 
-        # Namespace aliases
+        # Namespace aliases — exact server name key lookup (not substring matching)
         ns_lower = namespace.lower()
-        for fragment, synonyms in NAMESPACE_ALIASES.items():
-            if fragment in ns_lower:
-                aliases.extend(synonyms)
+        if ns_lower in NAMESPACE_ALIASES:
+            aliases.extend(NAMESPACE_ALIASES[ns_lower])
 
         # Action aliases from tool name words
         name_words = tool_name.replace("_", " ").replace("-", " ").lower().split()
@@ -149,11 +142,18 @@ class BMXFRetriever(ToolRetriever):
         for doc in snapshot.docs:
             doc.retrieval_aliases = self._generate_aliases(doc.tool_name, doc.namespace)
 
-        index = BMXIndex(normalize_scores=True)
-        index.build_field_index(snapshot.docs)
+        # Build dual indexes from the same ToolDoc set
+        env_index = BMXIndex(normalize_scores=True, alpha_override=0.5)
+        env_index.build_field_index(snapshot.docs)
+
+        nl_index = BMXIndex(normalize_scores=True, alpha_override=None)
+        nl_index.build_field_index(snapshot.docs)
 
         self._snapshot = snapshot
-        self._index = index
+        self._env_index = env_index
+        self._nl_index = nl_index
+        # Keep _index pointing at env_index for backward-compat callers
+        self._index = env_index
         self._doc_by_key = {doc.tool_key: doc for doc in snapshot.docs}
 
         logger.debug(
@@ -162,6 +162,12 @@ class BMXFRetriever(ToolRetriever):
             snapshot.version,
             snapshot.schema_hash[:8],
         )
+
+    # ── Version accessor ─────────────────────────────────────────────────────
+
+    def get_snapshot_version(self) -> str:
+        """Return the current catalog snapshot version, or empty string if none."""
+        return self._snapshot.version if self._snapshot else ""
 
     # ── Retrieval ───────────────────────────────────────────────────────────
 
@@ -172,11 +178,17 @@ class BMXFRetriever(ToolRetriever):
     ) -> list[ScoredTool]:
         """Score candidates using BMXF; in shadow mode return all with scores logged.
 
+        Selects _env_index (alpha_override=0.5) when context.query_mode=="env",
+        _nl_index (alpha_override=None) when context.query_mode=="nl".
+
         If no index has been built yet (or query is empty) falls back to
         returning all candidates with score=1.0 (passthrough behaviour).
         """
+        # Select index based on query_mode
+        index = self._env_index if context.query_mode == "env" else self._nl_index
+
         # Fallback: no index or empty query
-        if self._index is None or not context.query.strip():
+        if index is None or not context.query.strip():
             return [
                 ScoredTool(
                     tool_key=m.tool.name,
@@ -195,7 +207,7 @@ class BMXFRetriever(ToolRetriever):
             key_to_mapping[key] = m
 
         max_k = self._config.max_k if not self._config.shadow_mode else len(candidates)
-        raw_scores = self._index.search_fields(context.query, top_k=max(max_k * 2, 30))
+        raw_scores = index.search_fields(context.query, top_k=max(max_k * 2, 30))
 
         # Build scored list restricted to the candidate set
         scored: list[ScoredTool] = []

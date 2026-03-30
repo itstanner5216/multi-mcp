@@ -64,6 +64,10 @@ class MCPProxyServer(server.Server):
         self._tool_failure_counts: dict[str, int] = {}
         # After this many consecutive transport failures, auto-quarantine the tool
         self.quarantine_threshold: int = 3
+        # Register roots/list_changed notification handler
+        self.notification_handlers[types.RootsListChangedNotification] = (
+            self._handle_roots_list_changed
+        )
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -341,13 +345,62 @@ class MCPProxyServer(server.Server):
         }
 
     ## Tools capabilities
+    def _get_session_id(self) -> str:
+        """Return the current session identifier.
+
+        Uses the active server session object id as the session key.
+        Falls back to "default" when no server session is active.
+        """
+        if self._server_session is not None:
+            return str(id(self._server_session))
+        return "default"
+
+    async def _request_and_set_roots(self, session_id: str) -> None:
+        """Request roots/list from the client and pass URIs to the retrieval pipeline.
+
+        Called after session initialization and on roots/list_changed notifications.
+        Safe to call when no retrieval pipeline is configured or when the client
+        does not support roots — failures are logged and swallowed.
+        """
+        if self.retrieval_pipeline is None:
+            return
+        if self._server_session is None:
+            return
+        try:
+            result = await self._server_session.list_roots()
+            root_uris = [r.uri for r in result.roots]
+            await self.retrieval_pipeline.set_session_roots(session_id, root_uris)
+            self.logger.debug(
+                "🌳 Roots acquired for session %s: %d root(s)", session_id, len(root_uris)
+            )
+        except Exception as e:
+            # Client may not support roots — not an error condition
+            self.logger.debug("⚠️ roots/list not available: %s", e)
+
+    async def _handle_roots_list_changed(self, notification: Any) -> None:
+        """Handle roots/list_changed notification from the client.
+
+        Re-requests roots/list and updates the pipeline's WorkspaceEvidence cache.
+        Source plan line 310: "roots/list_changed → immediate re-scan + re-score."
+        """
+        session_id = self._get_session_id()
+        await self._request_and_set_roots(session_id)
+
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
         and updated dynamically when servers are added/removed.
         When a retrieval pipeline is configured, delegates to it for filtering."""
         if self.retrieval_pipeline is not None:
-            # TODO: extract real session_id from MCP request context when available
-            tools = await self.retrieval_pipeline.get_tools_for_list("default")
+            session_id = self._get_session_id()
+            # Build conversation context from session history
+            conv_parts: list[str] = []
+            conv_parts.extend(self.retrieval_pipeline.get_session_tool_history(session_id))
+            conv_parts.extend(self.retrieval_pipeline.get_session_argument_keys(session_id))
+            conv_parts.extend(self.retrieval_pipeline.get_session_router_describes(session_id))
+            conversation_context = " ".join(conv_parts)
+            tools = await self.retrieval_pipeline.get_tools_for_list(
+                session_id, conversation_context
+            )
             return types.ServerResult(tools=tools)
         all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
@@ -376,12 +429,12 @@ class MCPProxyServer(server.Server):
 
         # Routing tool dispatch — must come before trigger manager and registry lookup
         try:
-            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_KEY, handle_routing_call
+            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_NAME, handle_routing_call
             _has_routing = True
         except ImportError:
             _has_routing = False
 
-        if _has_routing and tool_name == ROUTING_TOOL_KEY:
+        if _has_routing and tool_name == ROUTING_TOOL_NAME:
             name = arguments.get("name", "")
             describe = bool(arguments.get("describe", False))
             call_args = arguments.get("arguments", {})
@@ -837,8 +890,13 @@ class MCPProxyServer(server.Server):
             self._server_session = session
             self.logger.debug("🔗 Server session stored for notifications")
 
+            # Request roots/list after session init (Step A + C from source plan §5)
+            session_id = self._get_session_id()
+
             # Call parent's message handling loop
             async with anyio.create_task_group() as tg:
+                # Fire-and-forget roots request — non-blocking startup task
+                tg.start_soon(self._request_and_set_roots, session_id)
                 async for message in session.incoming_messages:
                     self.logger.debug(f"Received message: {message}")
 
