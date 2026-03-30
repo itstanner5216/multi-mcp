@@ -402,11 +402,13 @@ class MCPProxyServer(server.Server):
             root_uris = [r.uri for r in result.roots]
             await self.retrieval_pipeline.set_session_roots(session_id, root_uris)
             self.logger.debug(
-                "🌳 Roots acquired for session %s: %d root(s)", session_id, len(root_uris)
+                "🌳 Roots acquired for session {session_id}: {root_count} root(s)",
+                session_id=session_id,
+                root_count=len(root_uris),
             )
         except Exception as e:
             # Client may not support roots — not an error condition
-            self.logger.debug("⚠️ roots/list not available: %s", e)
+            self.logger.debug("⚠️ roots/list not available: {error}", error=e)
 
     async def _handle_roots_list_changed(self, notification: Any) -> None:
         """Handle roots/list_changed notification from the client.
