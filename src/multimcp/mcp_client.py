@@ -29,6 +29,7 @@ Improvements over the original mcp_client.py:
 
 from contextlib import AsyncExitStack
 from typing import Any, Awaitable, Callable, Dict, Optional, Set
+import ipaddress
 import os
 import asyncio
 import random
@@ -69,6 +70,14 @@ PROTECTED_ENV_VARS = {
 _BACKOFF_BASE = 1.0   # seconds, initial retry delay
 _BACKOFF_CAP = 60.0   # seconds, maximum retry delay
 
+# Dangerous IP ranges for SSRF protection.
+# NOTE: IPv4 loopback (127.0.0.0/8) and IPv6 loopback (::1/128) are intentionally
+# excluded so that localhost-based MCP servers remain accessible.
+_PRIVATE_RANGES: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = [
+    ipaddress.ip_network("169.254.0.0/16"),  # IPv4 link-local (APIPA)
+    ipaddress.ip_network("fe80::/10"),        # IPv6 link-local — DNS-rebinding risk
+]
+
 
 def _get_allowed_commands() -> set:
     """Return the set of allowed commands, from env var or default."""
@@ -107,7 +116,7 @@ def _validate_command(command: str) -> None:
 
 
 async def _validate_url(url: str) -> None:
-    """Validate URL: check scheme, hostname presence, and DNS resolvability."""
+    """Validate URL: check scheme, hostname presence, DNS resolvability, and SSRF safety."""
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"URL scheme '{parsed.scheme}' is not allowed. Only http/https permitted.")
@@ -117,9 +126,22 @@ async def _validate_url(url: str) -> None:
 
     loop = asyncio.get_running_loop()
     try:
-        await loop.getaddrinfo(hostname, None)
+        addrs = await loop.getaddrinfo(hostname, None)
     except socket.gaierror as e:
         raise ValueError(f"Could not resolve hostname '{hostname}': {e}")
+
+    for _family, _type, _proto, _canon, sockaddr in addrs:
+        ip_str = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        for private_net in _PRIVATE_RANGES:
+            if ip in private_net:
+                raise ValueError(
+                    f"URL resolves to a private/internal address '{ip_str}' "
+                    f"({private_net}) — SSRF protection rejected this request."
+                )
 
 
 def _filter_env(env: dict) -> dict:
