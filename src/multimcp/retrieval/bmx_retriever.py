@@ -13,8 +13,9 @@ intentionally leaves retrieval_aliases empty.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
+
+from loguru import logger
 
 from .base import ToolRetriever
 from .bmx_index import BMXIndex
@@ -23,8 +24,6 @@ from .models import RetrievalConfig, RetrievalContext, ScoredTool, ToolCatalogSn
 
 if TYPE_CHECKING:
     from src.multimcp.mcp_proxy import ToolMapping
-
-logger = logging.getLogger(__name__)
 
 # ── Alias maps ──────────────────────────────────────────────────────────────
 # NAMESPACE_ALIASES: server-name fragments → lexical synonyms.

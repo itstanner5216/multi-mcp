@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -21,7 +20,6 @@ from .tokens import (
     build_tokens,
     MANIFEST_LANGUAGE_MAP,
     LOCKFILE_NAMES,
-    MAX_README_TOKENS,
 )
 
 # ── Allowlist ────────────────────────────────────────────────────────────────

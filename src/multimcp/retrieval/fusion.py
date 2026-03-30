@@ -35,7 +35,6 @@ def weighted_rrf(
     # Penalty rank for tools absent from a list
     env_max = len(env_ranked) + 1
     conv_max = len(conv_ranked) + 1
-    conv_max = len(conv_ranked)
 
     # Collect tool_mapping references: env takes precedence, conv fills gaps
     tool_map: dict[str, object] = {}

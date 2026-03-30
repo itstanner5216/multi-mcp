@@ -9,8 +9,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
+from loguru import logger
+
 if TYPE_CHECKING:
-    from .scanner import RootScanner
+    from .scanner import TelemetryScanner
 
 # Adaptive polling schedule: idle polls back off through these intervals (seconds)
 _POLL_SCHEDULE = [5.0, 10.0, 20.0, 30.0]
@@ -35,7 +37,7 @@ class RootMonitor:
 
     def __init__(
         self,
-        scanner: Optional["RootScanner"] = None,
+        scanner: Optional["TelemetryScanner"] = None,
         significance_threshold: float = _SIGNIFICANCE_THRESHOLD,
         min_debounce_s: float = 10.0,
     ) -> None:
@@ -73,7 +75,8 @@ class RootMonitor:
             try:
                 evidence = self._scanner.scan_roots()
                 significance = self._estimate_significance(evidence)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Scanner failed during poll: {}", str(exc))
                 significance = 0.0
 
         self.record_change(significance)

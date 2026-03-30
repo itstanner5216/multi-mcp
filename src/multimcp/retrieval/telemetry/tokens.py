@@ -57,6 +57,12 @@ DB_FILES: set[str] = {"schema.prisma", "schema.sql", "migrations", "alembic.ini"
 MAX_FAMILY_CONTRIBUTION: float = 0.35  # No single family > 35% of total token weight sum
 MAX_README_TOKENS: int = 20            # Cap readme-derived tokens
 
+_TECH_WORDS = re.compile(
+    r"\b(docker|kubernetes|k8s|postgres|mysql|redis|mongodb|react|vue|angular"
+    r"|django|flask|fastapi|rails|spring|rust|golang|typescript|python|node)\b",
+    re.IGNORECASE,
+)
+
 
 def build_tokens(
     found_files: set[str],
@@ -123,14 +129,9 @@ def build_tokens(
 
 def _extract_readme_tokens(lines: list[str]) -> dict[str, float]:
     """Extract keyword tokens from README lines (tech-stack words only)."""
-    TECH_WORDS = re.compile(
-        r"\b(docker|kubernetes|k8s|postgres|mysql|redis|mongodb|react|vue|angular"
-        r"|django|flask|fastapi|rails|spring|rust|golang|typescript|python|node)\b",
-        re.IGNORECASE,
-    )
     found: dict[str, float] = {}
     for line in lines:
-        for match in TECH_WORDS.finditer(line):
+        for match in _TECH_WORDS.finditer(line):
             word = match.group(0).lower()
             found[word] = 1.0
     return found
