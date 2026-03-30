@@ -314,7 +314,7 @@ class TestAliasGeneration:
         retriever = BMXFRetriever()
         aliases = retriever._generate_aliases("do_something_strange", "xyz_service")
         # Should return empty string when no aliases match
-        assert isinstance(aliases, str)
+        assert aliases == ""
 
     def test_hyphen_and_underscore_normalized(self):
         retriever = BMXFRetriever()

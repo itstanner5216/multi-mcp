@@ -6,9 +6,6 @@ Covers:
 """
 from __future__ import annotations
 
-import pytest
-from unittest.mock import MagicMock
-
 from src.multimcp.retrieval.bmx_retriever import BMXFRetriever, NAMESPACE_ALIASES
 
 
@@ -23,6 +20,7 @@ class TestExactKeyLookup:
         assert "github" in NAMESPACE_ALIASES
         assert "repository" in NAMESPACE_ALIASES["github"]
 
+    def test_context7_exact_key_lookup(self):
         """'context7' key must return aliases including 'documentation'."""
         assert "context7" in NAMESPACE_ALIASES
         assert "documentation" in NAMESPACE_ALIASES["context7"]

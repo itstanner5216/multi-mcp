@@ -17,9 +17,9 @@ progress:
 
 ## Current Status
 
-- **Milestone:** Phase 3 — Turn-by-Turn Adaptive
-- **Current Phase:** 07
-- **Phase Status:** Phase 7 Plan 1 complete — 1031 tests passing
+- **Milestone:** Phase 7+ — Core Pipeline Wiring + Hardening
+- **Current Phase:** 09
+- **Phase Status:** Addressing review comments
 - **Last Updated:** 2026-03-30
 
 ## Active Phase
@@ -38,6 +38,9 @@ Goal: Wire all scoring and retrieval paths end-to-end so the BMXF pipeline actua
 | 4 | Rollout Hardening | ✅ Complete (4/4 plans) |
 | 5 | Post-GA Learning | 📋 Planned (3 plans) |
 | 6 | Verification & Compliance | 📋 Planned (1 plan) |
+| 7 | Core Pipeline Wiring | ✅ Complete (1/1 plans) |
+| 8 | Turn-Boundary State & Tool Call Rewrite | ✅ Complete |
+| 9 | Replay Metrics & Rescore Monitoring | 🔄 In Progress |
 
 ## Session Continuity
 

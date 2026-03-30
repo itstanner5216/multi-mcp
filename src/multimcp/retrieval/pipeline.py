@@ -572,10 +572,15 @@ class RetrievalPipeline:
         ws_confidence = workspace_evidence.workspace_confidence if workspace_evidence else 0.0
         conv_confidence = min(1.0, len(conv_query.split()) / 10.0) if conv_query else 0.0
         roots_changed = False
+        # Check for explicit tool name mention in raw conversation text.
+        # Uses the raw conversation_context (not conv_query, which has underscores
+        # replaced with spaces and is tokenized) so that tool_key fragments like
+        # "search_repositories" can match.
+        raw_conv_lower = (conversation_context or "").lower()
         explicit_tool_mention = any(
-            k.split("__")[-1].replace("_", " ") in conv_query
+            k.split("__")[-1].lower() in raw_conv_lower
             for k in all_registry_keys
-        ) if conv_query else False
+        ) if raw_conv_lower else False
 
         # Step 7: 6-tier fallback ladder
         fallback_tier = 1
@@ -609,7 +614,6 @@ class RetrievalPipeline:
                 )
                 scored_tools = _weighted_rrf(env_ranked, conv_ranked, fusion_alpha)
                 fallback_tier = 1
-            except Exception:
             except Exception as e:
                 self.logger.warning("Tier 1 scoring failed: %s", e, exc_info=True)
                 scored_tools = None

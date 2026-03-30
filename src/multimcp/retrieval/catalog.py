@@ -13,6 +13,7 @@ generation is scorer-side logic.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import time
 from typing import TYPE_CHECKING
@@ -22,20 +23,21 @@ from .models import ToolCatalogSnapshot, ToolDoc
 if TYPE_CHECKING:
     from src.multimcp.mcp_proxy import ToolMapping
 
-_version_counter: int = 0
+_version_counter = itertools.count(1)
 
 
 def _extract_param_names(input_schema: object) -> list[str]:
     """Extract property keys from a tool's inputSchema dict.
 
-    Returns empty list if schema is None, not a dict, or has no 'properties'.
+    Returns sorted list for deterministic hashing. Returns empty list if
+    schema is None, not a dict, or has no 'properties'.
     """
     if not isinstance(input_schema, dict):
         return []
     props = input_schema.get("properties", {})
     if not isinstance(props, dict):
         return []
-    return list(props.keys())
+    return sorted(props.keys())
 
 
 def build_snapshot(registry: "dict[str, ToolMapping]") -> ToolCatalogSnapshot:
@@ -52,8 +54,7 @@ def build_snapshot(registry: "dict[str, ToolMapping]") -> ToolCatalogSnapshot:
         ToolCatalogSnapshot with incrementing version, stable schema_hash, and
         one ToolDoc per registry entry.
     """
-    global _version_counter
-    _version_counter += 1
+    version_num = next(_version_counter)
 
     docs: list[ToolDoc] = []
     for key, mapping in sorted(registry.items()):
@@ -80,7 +81,7 @@ def build_snapshot(registry: "dict[str, ToolMapping]") -> ToolCatalogSnapshot:
     schema_hash = hashlib.sha256(canonical.encode()).hexdigest()
 
     return ToolCatalogSnapshot(
-        version=str(_version_counter),
+        version=str(version_num),
         schema_hash=schema_hash,
         built_at=time.time(),
         docs=docs,

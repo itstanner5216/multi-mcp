@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
 import hashlib
+import json
 import uuid
 from mcp import server, types
 from mcp.client.session import ClientSession
@@ -18,7 +19,11 @@ if TYPE_CHECKING:
 
 
 def _hash_tool_list(tools: list) -> str:
-    """Stable hash of a tool list for change detection."""
+    """Stable hash of a tool list for change detection.
+
+    Includes name, description, and inputSchema to detect schema/description
+    changes even when tool names remain constant.
+    """
 
     def _tool_fingerprint(t: Any) -> str:
         """Build a fingerprint for a single tool based on name, description, and schema."""
@@ -37,6 +42,8 @@ def _hash_tool_list(tools: list) -> str:
     fingerprints = sorted(_tool_fingerprint(t) for t in tools)
     combined = ";;".join(fingerprints)
     return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
+
+
 @dataclass
 class ToolMapping:
     server_name: str

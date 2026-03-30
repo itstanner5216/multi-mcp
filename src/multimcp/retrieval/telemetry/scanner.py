@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
+import anyio
+
 from .evidence import RootEvidence, WorkspaceEvidence, merge_evidence
 from .tokens import (
     build_tokens,
@@ -248,6 +250,20 @@ class TelemetryScanner:
             )
             results.append(evidence)
         return merge_evidence(results)
+
+    async def async_scan_roots(
+        self,
+        root_uris: list[str],
+        root_names: Optional[list[Optional[str]]] = None,
+    ) -> WorkspaceEvidence:
+        """Async wrapper that offloads blocking scan to a worker thread.
+
+        Use this from async code paths (e.g., session init, roots updates)
+        to avoid blocking the event loop with filesystem I/O.
+        """
+        return await anyio.to_thread.run_sync(
+            lambda: self.scan_roots(root_uris, root_names)
+        )
 
 
 def scan_roots(

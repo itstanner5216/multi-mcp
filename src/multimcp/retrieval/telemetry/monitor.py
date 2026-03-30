@@ -103,7 +103,8 @@ class RootMonitor:
     def check_for_changes(self) -> bool:
         """Return True if cumulative significance has met the threshold.
 
-        Respects debounce: won't return True again within min_debounce_s of last trigger.
+        Respects debounce: won't return True again within min_debounce_s of the
+        last time this method returned True (or last acknowledge).
         Does NOT reset state -- call acknowledge() to reset after handling.
         """
         if self._cumulative_significance < self._threshold:
@@ -113,6 +114,8 @@ class RootMonitor:
         if (now - self._last_trigger_time) < self._min_debounce_s:
             return False  # Still in debounce window
 
+        # Record emission time so repeated calls within debounce window return False
+        self._last_trigger_time = now
         return True
 
     def acknowledge(self) -> None:

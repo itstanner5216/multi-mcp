@@ -267,19 +267,19 @@ A code-grounded implementation of roots-anchored BMXF tool retrieval for the Mul
 <!-- GSD:stack-start source:STACK.md -->
 ## Technology Stack
 
-Technology stack not yet documented. Will populate after codebase mapping or first phase.
+See **Dependencies** section above for the complete technology stack. Key technologies: Python 3.10+, asyncio/anyio, Starlette + Uvicorn, MCP SDK, loguru, Pydantic v2, httpx.
 <!-- GSD:stack-end -->
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
 
-Conventions not yet established. Will populate as patterns emerge during development.
+See **Code Conventions** section above for established patterns (error handling, async patterns, type hints, tool namespacing).
 <!-- GSD:conventions-end -->
 
 <!-- GSD:architecture-start source:ARCHITECTURE.md -->
 ## Architecture
 
-Architecture not yet mapped. Follow existing patterns found in the codebase.
+See **Architecture** section above for core components (MultiMCP, MCPProxyServer, MCPClientManager) and key patterns (tool namespacing, transport flexibility, dynamic server management).
 <!-- GSD:architecture-end -->
 
 <!-- GSD:workflow-start source:GSD defaults -->

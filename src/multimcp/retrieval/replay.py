@@ -104,7 +104,7 @@ def evaluate_replay(log_path: str | Path) -> ReplayMetrics:
         group = ev.get("group", "control")
         if group == "canary":
             canary_count += 1
-        elif group != "shadow":
+        elif group == "control":
             control_count += 1
 
     latencies.sort()

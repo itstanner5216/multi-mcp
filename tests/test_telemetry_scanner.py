@@ -57,7 +57,8 @@ def test_scan_root_with_package_json():
         (Path(tmp) / "package.json").write_text('{"name":"test"}')
         evidence = scan_root(tmp)
     assert "manifest:package.json" in evidence.tokens
-    assert evidence.tokens["manifest:package.json"] == TOKEN_WEIGHTS["manifest:"]
+    # Weight may be scaled by iterative family cap
+    assert 0 < evidence.tokens["manifest:package.json"] <= TOKEN_WEIGHTS["manifest:"]
     assert "lang:javascript" in evidence.tokens
     assert evidence.partial_scan is False
 

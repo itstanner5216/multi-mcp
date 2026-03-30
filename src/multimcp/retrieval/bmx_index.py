@@ -616,6 +616,7 @@ class BMXIndex:
         self._alpha = self._compute_alpha()
         self._beta = self._compute_beta()
 
+        self._is_built = True
         logger.debug(f"Updated BMX index with chunk {chunk_id}")
 
     def remove_from_index(self, chunk_id: str) -> bool:

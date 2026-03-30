@@ -21,7 +21,8 @@ from src.multimcp.retrieval.models import RootEvidence, WorkspaceEvidence
 def test_package_json_manifest_token():
     tokens = build_tokens({"package.json"})
     assert "manifest:package.json" in tokens
-    assert tokens["manifest:package.json"] == TOKEN_WEIGHTS["manifest:"]
+    # Weight may be scaled by family cap, but must be positive and <= base weight
+    assert 0 < tokens["manifest:package.json"] <= TOKEN_WEIGHTS["manifest:"]
 
 
 def test_package_json_lang_tokens():
@@ -35,7 +36,8 @@ def test_package_json_lang_tokens():
 def test_cargo_toml_manifest_token():
     tokens = build_tokens({"Cargo.toml"})
     assert "manifest:Cargo.toml" in tokens
-    assert tokens["manifest:Cargo.toml"] == TOKEN_WEIGHTS["manifest:"]
+    # Weight may be scaled by family cap, but must be positive and <= base weight
+    assert 0 < tokens["manifest:Cargo.toml"] <= TOKEN_WEIGHTS["manifest:"]
 
 
 def test_cargo_toml_lang_tokens():

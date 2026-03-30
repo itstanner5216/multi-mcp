@@ -1,4 +1,4 @@
-"""Per-session monotonic tool set management."""
+"""Per-session tool set management with bounded demotion support."""
 
 from __future__ import annotations
 
@@ -6,10 +6,15 @@ from .models import RetrievalConfig
 
 
 class SessionStateManager:
-    """Manages per-session active tool sets with monotonic expansion guarantee.
+    """Manages per-session active tool sets with bounded demotion.
 
-    Once a tool is added to a session, it is never removed for that session's lifetime.
-    This prevents hallucination from LLMs that reference previously-seen tools.
+    Tools are added to a session via promote() or add_tools() (monotonic expansion).
+    Tools may be removed via demote() with hysteresis safety constraints:
+    - Tools used in the current turn are never demoted.
+    - At most max_per_turn tools are demoted per call (SESSION-03).
+
+    This design prevents hallucination from LLMs referencing recently-seen tools
+    while allowing the active set to shrink when tools are no longer relevant.
     """
 
     def __init__(self, config: RetrievalConfig) -> None:
