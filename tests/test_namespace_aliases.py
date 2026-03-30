@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 from unittest.mock import MagicMock
-from mcp import types
 
 from src.multimcp.retrieval.bmx_retriever import BMXFRetriever, NAMESPACE_ALIASES
 
