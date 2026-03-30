@@ -43,20 +43,6 @@ class MCPSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MULTI_MCP_")
 
 
-def _make_startup_retrieval_config():
-    """Return the RetrievalConfig used at server startup (shadow mode, pre-Phase-9).
-
-    Extracted as a module-level factory so tests can assert on the runtime object's
-    field values rather than inspecting source text.
-    """
-    from src.multimcp.retrieval.models import RetrievalConfig
-
-    return RetrievalConfig(
-        enabled=True,
-        shadow_mode=True,
-        rollout_stage="shadow",
-    )
-
 
 class MultiMCP:
     def __init__(self, **settings: Any):
@@ -548,16 +534,35 @@ class MultiMCP:
             self.proxy = await MCPProxyServer.create(self.client_manager)
             self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
-            # Initialize retrieval pipeline — pre-Phase-9 coherent shadow state.
-            # enabled=True: pipeline runs scoring and logging (data collection active).
-            # shadow_mode=True + rollout_stage="shadow": score/log as normal BUT return
-            # all tools (no active-set filtering). Phase 9 will wire the rollout YAML
-            # and promote to canary/ga once config plumbing is complete.
+            # Initialize retrieval pipeline from YAML config.
+            # yaml_config is the MultiMCPConfig local variable loaded earlier in run().
+            # self.config is MCPSettings (BaseSettings) and does NOT have a retrieval field.
+            # When no retrieval: block appears in YAML, RetrievalSettings() defaults apply
+            # (enabled=False, shadow_mode=False) — preserving full backward compatibility.
             from src.multimcp.retrieval.pipeline import RetrievalPipeline
             from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
             from src.multimcp.retrieval.logging import NullLogger, FileRetrievalLogger
             from src.multimcp.retrieval.session import SessionStateManager
-            retrieval_config = _make_startup_retrieval_config()
+            from src.multimcp.retrieval.models import RetrievalConfig
+            from src.multimcp.retrieval.metrics import RollingMetrics
+
+            # Build RetrievalConfig from YAML settings.
+            yaml_retrieval = yaml_config.retrieval  # RetrievalSettings — defaults to enabled=False when absent
+            retrieval_config = RetrievalConfig(
+                enabled=yaml_retrieval.enabled,
+                top_k=yaml_retrieval.top_k,
+                full_description_count=yaml_retrieval.full_description_count,
+                anchor_tools=yaml_retrieval.anchor_tools,
+                shadow_mode=yaml_retrieval.shadow_mode,
+                scorer=yaml_retrieval.scorer,
+                max_k=yaml_retrieval.max_k,
+                enable_routing_tool=yaml_retrieval.enable_routing_tool,
+                enable_telemetry=yaml_retrieval.enable_telemetry,
+                telemetry_poll_interval=yaml_retrieval.telemetry_poll_interval,
+                canary_percentage=yaml_retrieval.canary_percentage,
+                rollout_stage=yaml_retrieval.rollout_stage,
+            )
+
             bmxf_retriever = BMXFRetriever(config=retrieval_config)
             self.bmxf_retriever = bmxf_retriever
 
@@ -575,14 +580,21 @@ class MultiMCP:
             except Exception as _te:
                 self.logger.warning(f"⚠️ TelemetryScanner unavailable: {_te}")
 
-            # Issue D: wire FileRetrievalLogger instead of NullLogger
-            _log_path = Path("logs/retrieval_rankings.jsonl")
-            _log_path.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                retrieval_logger = FileRetrievalLogger(_log_path)
-            except Exception as _le:
-                self.logger.warning(f"⚠️ FileRetrievalLogger unavailable, using NullLogger: {_le}")
+            # Logger selection from YAML log_path (replaces hardcoded _log_path).
+            # When log_path is set, use FileRetrievalLogger; otherwise NullLogger.
+            if yaml_retrieval.log_path:
+                _log_path = Path(yaml_retrieval.log_path)
+                _log_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    retrieval_logger = FileRetrievalLogger(_log_path)
+                except Exception as _le:
+                    self.logger.warning(f"⚠️ FileRetrievalLogger unavailable: {_le}")
+                    retrieval_logger = NullLogger()
+            else:
                 retrieval_logger = NullLogger()
+
+            # RollingMetrics — created only when pipeline is enabled (required for rescore alerting).
+            rolling_metrics = RollingMetrics(window_seconds=1800) if retrieval_config.enabled else None
 
             self.proxy.retrieval_pipeline = RetrievalPipeline(
                 retriever=bmxf_retriever,
@@ -591,6 +603,7 @@ class MultiMCP:
                 config=retrieval_config,
                 tool_registry=self.proxy.tool_to_server,
                 telemetry_scanner=telemetry_scanner,
+                rolling_metrics=rolling_metrics,
             )
 
             # Pre-populate tool list from YAML cache so tools are visible immediately
