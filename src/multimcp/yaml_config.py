@@ -30,9 +30,21 @@ class ServerConfig(BaseModel):
 class RetrievalSettings(BaseModel):
     """Configuration for the intelligent tool retrieval pipeline."""
     enabled: bool = False
-    top_k: int = Field(default=10, ge=1)
+    top_k: int = Field(default=15, ge=1)
     full_description_count: int = Field(default=3, ge=0)
     anchor_tools: list[str] = Field(default_factory=list)
+    # Phase 2 fields
+    shadow_mode: bool = False
+    scorer: str = "bmxf"
+    max_k: int = Field(default=20, ge=1, le=20)
+    enable_routing_tool: bool = True
+    enable_telemetry: bool = True
+    telemetry_poll_interval: int = Field(default=30, ge=5)
+    # Phase 4 rollout fields
+    canary_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
+    rollout_stage: str = "shadow"
+    # Logging
+    log_path: str = ""
 
 
 class ProfileConfig(BaseModel):
