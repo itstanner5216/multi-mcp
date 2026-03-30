@@ -57,7 +57,7 @@ def weighted_rrf(
             )
         )
 
-    fused.sort(key=lambda s: s.score, reverse=True)
+    fused.sort(key=lambda s: (-s.score, s.tool_key))
     return fused
 
 
