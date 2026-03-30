@@ -533,10 +533,11 @@ class MultiMCP:
             self.proxy = await MCPProxyServer.create(self.client_manager)
             self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
-            # Initialize retrieval pipeline — Phase 7 live mode (WIRE-01).
-            # enabled=True + rollout_stage="ga": pipeline actively filters tool lists.
-            # shadow_mode=False: real filtering (not passthrough).
-            # TelemetryScanner: wired so workspace roots drive env-query signals.
+            # Initialize retrieval pipeline — pre-Phase-9 coherent shadow state.
+            # enabled=True: pipeline runs scoring and logging (data collection active).
+            # shadow_mode=True + rollout_stage="shadow": score/log as normal BUT return
+            # all tools (no active-set filtering). Phase 9 will wire the rollout YAML
+            # and promote to canary/ga once config plumbing is complete.
             from src.multimcp.retrieval.pipeline import RetrievalPipeline
             from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
             from src.multimcp.retrieval.logging import NullLogger, FileRetrievalLogger
@@ -545,8 +546,8 @@ class MultiMCP:
 
             retrieval_config = RetrievalConfig(
                 enabled=True,
-                shadow_mode=False,
-                rollout_stage="ga",
+                shadow_mode=True,
+                rollout_stage="shadow",
             )
             bmxf_retriever = BMXFRetriever(config=retrieval_config)
             self.bmxf_retriever = bmxf_retriever

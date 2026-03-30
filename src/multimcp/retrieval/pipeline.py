@@ -501,11 +501,17 @@ class RetrievalPipeline:
         # Determine session group for canary routing
         group = get_session_group(session_id, self.config)
 
-        # Shadow mode: score but return all tools (backward compatible)
-        is_filtered = (
-            self.config.rollout_stage == "ga"
-            or (self.config.rollout_stage == "canary" and group == "canary")
-        )
+        # Shadow mode is the FIRST dispatch guard (Fix B — stabilization-pre-phase9-code-fixes).
+        # When shadow_mode=True: score/log as normal (pipeline still runs), but always
+        # return all tools (no active-set filtering). This check must precede any
+        # rollout_stage == "ga" or "canary" filtering logic.
+        if self.config.shadow_mode:
+            is_filtered = False
+        else:
+            is_filtered = (
+                self.config.rollout_stage == "ga"
+                or (self.config.rollout_stage == "canary" and group == "canary")
+            )
 
         # Step 2: Turn-boundary entry — close the previous turn
         if self._in_turn.get(session_id, False):

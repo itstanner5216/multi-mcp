@@ -464,8 +464,19 @@ class MCPProxyServer(server.Server):
             tools_by_server[server].append(tool_name)
         return tools_by_server
 
-    async def _call_tool(self, req: types.CallToolRequest) -> types.ServerResult:
-        """Invoke a tool on the correct backend MCP server."""
+    async def _call_tool(
+        self,
+        req: types.CallToolRequest,
+        _skip_pipeline_record: bool = False,
+    ) -> types.ServerResult:
+        """Invoke a tool on the correct backend MCP server.
+
+        _skip_pipeline_record: when True, suppresses the on_tool_called() write
+        at the end of the normal tool path. Used by the routing-tool proxy branch
+        so that the outer proxy path is the sole writer (is_router_proxy=True),
+        preventing double-counting in RankingEvent.direct_tool_calls /
+        router_proxies (Fix A — stabilization-pre-phase9-code-fixes).
+        """
         tool_name = req.params.name
         tool_item = self.tool_to_server.get(tool_name)
         arguments = req.params.arguments or {}
@@ -495,8 +506,10 @@ class MCPProxyServer(server.Server):
                         name=actual_tool_name, arguments=call_args
                     ),
                 )
-                proxy_result = await self._call_tool(proxy_req)
+                proxy_result = await self._call_tool(proxy_req, _skip_pipeline_record=True)
                 # Record router proxy accounting (CF-2) — single write path
+                # _skip_pipeline_record=True suppresses the direct on_tool_called()
+                # inside the inner call so only this proxy path records (is_router_proxy=True).
                 if self.retrieval_pipeline is not None:
                     _sid: Optional[str] = None
                     try:
@@ -589,8 +602,10 @@ class MCPProxyServer(server.Server):
                 # Success: reset circuit breaker for this tool
                 getattr(self, '_tool_failure_counts', {}).pop(tool_name, None)
 
-                # Notify retrieval pipeline of tool usage (turn-boundary based)
-                if self.retrieval_pipeline is not None:
+                # Notify retrieval pipeline of tool usage (turn-boundary based).
+                # Suppressed when _skip_pipeline_record=True (routing-tool proxy inner call)
+                # to avoid double-counting — the outer proxy path records is_router_proxy=True.
+                if self.retrieval_pipeline is not None and not _skip_pipeline_record:
                     try:
                         _session_id = self._get_session_id()
                         await self.retrieval_pipeline.on_tool_called(
