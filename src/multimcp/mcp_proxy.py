@@ -19,10 +19,24 @@ if TYPE_CHECKING:
 
 def _hash_tool_list(tools: list) -> str:
     """Stable hash of a tool list for change detection."""
-    names = sorted(t.name for t in tools)
-    return hashlib.sha256(",".join(names).encode()).hexdigest()[:16]
 
+    def _tool_fingerprint(t: Any) -> str:
+        """Build a fingerprint for a single tool based on name, description, and schema."""
+        name = getattr(t, "name", "")
+        description = getattr(t, "description", "")
 
+        schema_obj = None
+        for attr in ("input_schema", "inputSchema", "schema", "parameters"):
+            if hasattr(t, attr):
+                schema_obj = getattr(t, attr)
+                break
+
+        schema_repr = repr(schema_obj) if schema_obj is not None else ""
+        return "|".join([name, description, schema_repr])
+
+    fingerprints = sorted(_tool_fingerprint(t) for t in tools)
+    combined = ";;".join(fingerprints)
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 @dataclass
 class ToolMapping:
     server_name: str
