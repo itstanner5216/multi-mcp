@@ -6,8 +6,8 @@
 
 - [ ] **SCORE-01**: System copies BMXIndex from `bmx.py` into `src/multimcp/retrieval/bmx_index.py` and adds BMXF field-weighted wrapper methods (`build_field_index`, `search_fields`)
 - [ ] **SCORE-02**: System implements `BMXFRetriever` class implementing `ToolRetriever` ABC with `rebuild_index(registry)` pattern matching `KeywordRetriever`
-- [ ] **SCORE-03**: System scores tools across 5 fields with weights: `tool_name(3.0)`, `namespace(2.5)`, `retrieval_aliases(1.5)`, `description(1.0)`, `parameter_names(0.5)`
-- [ ] **SCORE-04**: System auto-tunes BMX α from corpus avgdl (clamped 0.5–1.5) and β = 1/log(1+N), eliminating manual k1/b tuning
+- [x] **SCORE-03**: System scores tools across 5 fields with weights: `tool_name(3.0)`, `namespace(2.5)`, `retrieval_aliases(1.5)`, `description(1.0)`, `parameter_names(0.5)`
+- [x] **SCORE-04**: System auto-tunes BMX α from corpus avgdl (clamped 0.5–1.5) and β = 1/log(1+N), eliminating manual k1/b tuning
 
 ### Catalog & Data Models (CATALOG)
 
@@ -18,10 +18,10 @@
 
 ### Session Routing State (SESSION)
 
-- [x] **SESSION-01**: System defines `SessionRoutingState` dataclass replacing monotonic guarantee with promote/demote hysteresis
-- [x] **SESSION-02**: System promotes tools when rank within K-2 OR used via router 2/3 last turns
-- [x] **SESSION-03**: System demotes tools only when rank below K+3 for 2 consecutive turns (max 3 demotions per turn)
-- [x] **SESSION-04**: System maintains session isolation — `SessionRoutingState` is never shared across sessions
+- [ ] **SESSION-01**: System defines `SessionRoutingState` dataclass replacing monotonic guarantee with promote/demote hysteresis — **RESET (F-07): mid-turn stability violated; promote/tools_list_changed fires mid-turn**
+- [ ] **SESSION-02**: System promotes tools when rank within K-2 OR used via router 2/3 last turns — **RESET (F-12): K-2 promotion path absent; only promote-on-call exists**
+- [ ] **SESSION-03**: System demotes tools only when rank below K+3 for 2 consecutive turns (max 3 demotions per turn) — **RESET (F-10): demote() never called from pipeline**
+- [ ] **SESSION-04**: System maintains session isolation — `SessionRoutingState` is never shared across sessions — **RESET (F-02): hardcoded "default" session ID**
 
 ### Telemetry & Root Scanning (TELEM)
 
@@ -33,26 +33,26 @@
 
 ### Routing Tool (ROUTER)
 
-- [x] **ROUTER-01**: System implements `routing_tool.py` as synthetic MCP tool registered via `_register_request_handlers()` in `MCPProxyServer`
+- [x] **ROUTER-01**: System implements `routing_tool.py` as synthetic MCP tool registered via `_register_request_handlers()` in `MCPProxyServer` — **RESET (F-01): routing tool advertised but not callable; dispatch checks ROUTING_TOOL_KEY not ROUTING_TOOL_NAME**
 - [x] **ROUTER-02**: Routing tool accepts `name` (exact tool lookup) and optional `describe` (return description) parameters per `PHASE2-PLAN.md` contract
 - [x] **ROUTER-03**: Routing tool enum lists namespace-grouped, env-relevance ordered demoted tools
-- [x] **ROUTER-04**: System never directly exposes more than 20 tools simultaneously; all tools beyond active set are accessible only through routing tool
+- [ ] **ROUTER-04**: System never directly exposes more than 20 tools simultaneously; all tools beyond active set are accessible only through routing tool — **RESET (F-05): Tier 6 exposes up to 30 direct tools with no routing tool**
 
 ### Fallback Ladder (FALLBACK)
 
-- [x] **FALLBACK-01**: System implements 6-tier bounded fallback ladder — never exposes full catalog at any tier
-- [x] **FALLBACK-02**: Terminal fallback (Tier 6) exposes conservative top-30 static defaults, not full `tool_to_server` registry
+- [x] **FALLBACK-01**: System implements 6-tier bounded fallback ladder — never exposes full catalog at any tier — **RESET (F-05): Tiers 1-5 absent; only a single "Tier 6" path exists**
+- [x] **FALLBACK-02**: Terminal fallback (Tier 6) exposes universal 12-tool set + routing tool, not full `tool_to_server` registry — **RESET (F-05): was "top-30" which deviates from source plan "12-tool + router" spec (PHASE2-SYNTHESIZED-PLAN.md line 898)**
 
 ### Fusion & Dynamic K (FUSION)
 
-- [x] **FUSION-01**: System implements weighted RRF in `fusion.py`: `final_rrf(tool) = α/(10+rank_env(t)) + (1-α)/(10+rank_conv(t))`
-- [x] **FUSION-02**: System applies alpha-decay: `α = max(0.15, 0.85 · e^(-0.25·turn))` with overrides for explicit tool name (α=0.15) and roots change (α=0.80)
-- [x] **FUSION-03**: System uses dynamic K: base 15, +3 if polyglot workspace, cap 20
+- [x] **FUSION-01**: System implements weighted RRF in `fusion.py`: `final_rrf(tool) = α/(10+rank_env(t)) + (1-α)/(10+rank_conv(t))` — **RESET (F-03): weighted_rrf() defined but never called from pipeline**
+- [x] **FUSION-02**: System applies alpha-decay: `α = max(0.15, 0.85 · e^(-0.25·turn))` with overrides for explicit tool name (α=0.15) and roots change (α=0.80) — **RESET (F-03): compute_alpha() defined but never called from pipeline**
+- [x] **FUSION-03**: System uses dynamic K: base 15, +3 if polyglot workspace, cap 20 — **RESET (F-03): dynamic K uses config.max_k>17 heuristic, not scoring-derived polyglot detection**
 
 ### Observability (OBS)
 
 - [x] **OBS-01**: System implements `FileRetrievalLogger` extending existing `RetrievalLogger` ABC with JSONL per-turn `RankingEvent` logging
-- [x] **OBS-02**: System emits `RankingEvent` per turn with: `session_id`, `turn_number`, `catalog_version`, `workspace_hash`, `alpha`, `active_k`, `fallback_tier`, `active_tool_ids`, `router_enum_size`, `scorer_latency_ms`
+- [ ] **OBS-02**: System emits `RankingEvent` per turn with: `session_id`, `turn_number`, `catalog_version`, `workspace_hash`, `alpha`, `active_k`, `fallback_tier`, `active_tool_ids`, `router_enum_size`, `scorer_latency_ms` — **RESET (F-02/F-08): catalog_version="" hardcoded, session_id="default" hardcoded, fallback_tier=1 hardcoded**
 
 ### Pipeline Wiring (WIRE)
 
@@ -93,15 +93,18 @@
 - [ ] **VERIFY-03**: Active set does not change during a model turn — tested by calling `get_tools_for_list()` twice within same turn and asserting identical results
 - [ ] **VERIFY-04**: Every turn is pinned to one `ToolCatalogSnapshot.version` — tested by mutating registry mid-session and verifying snapshot version doesn't change until turn boundary
 - [ ] **VERIFY-05**: `SessionRoutingState` is never shared across concurrent sessions — tested with 10 concurrent sessions verifying no state cross-contamination
-- [ ] **VERIFY-06**: Every fallback tier (1–6) produces a bounded, valid active set — tested by forcing each tier condition and asserting 0 < len(tools) <= 30 and routing tool present when demoted tools exist
+- [ ] **VERIFY-06**: Every fallback tier (1–6) produces a bounded, valid active set — tested by forcing each tier condition and asserting 0 < len(tools) <= 20 and routing tool present when demoted tools exist
 
 ## Traceability
 
 | Phase | Requirements Covered |
 |-------|---------------------|
-| Phase 0: Foundations | SCORE-01–04, CATALOG-01–04, WIRE-01–02, TEST-01–02 |
-| Phase 1: Safe Lexical MVP | TELEM-01–04, ROUTER-01–04, FALLBACK-01–02, OBS-01–02, TEST-03–04 |
-| Phase 2: Turn-by-Turn Adaptive | FUSION-01–03, SESSION-01–04, TELEM-05, TEST-05–06 |
-| Phase 3: Rollout Hardening | Migration flags, alerting, dashboards |
-| Phase 4: Post-GA Learning | v2 requirements above |
-| Phase 5: Verification & Compliance | VERIFY-01–06 |
+| Phase 1: Foundations | SCORE-01–04, CATALOG-01–04, WIRE-01–02, TEST-01–02 |
+| Phase 2: Safe Lexical MVP | TELEM-01–04, ROUTER-01–04, FALLBACK-01–02, OBS-01–02, TEST-03–04 |
+| Phase 3: Turn-by-Turn Adaptive | FUSION-01–03, SESSION-01–04, TELEM-05, TEST-05–06 |
+| Phase 4: Rollout Hardening | Migration flags, alerting, dashboards |
+| Phase 5: Post-GA Learning | v2 requirements above — ⛔ BLOCKED |
+| Phase 6: Verification & Compliance | VERIFY-01–06 — ⛔ BLOCKED |
+| **Phase 7: Core Pipeline Wiring** | **ROUTER-01, FALLBACK-01–02, FUSION-01–03, SCORE-03–04** (gap closure) |
+| **Phase 8: Session State & Turn Boundary** | **SESSION-01–04, OBS-02** (gap closure) |
+| **Phase 9: Rollout Activation & Observability** | **WIRE-01–02, CATALOG-04** (gap closure) |

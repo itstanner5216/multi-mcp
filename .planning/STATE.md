@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
-status: Ready to plan
-stopped_at: "Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)"
-last_updated: "2026-03-29T18:48:31.086Z"
+current_phase: 07
+status: Executing Phase 07
+stopped_at: "Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing"
+last_updated: "2026-03-30T00:57:20.619Z"
 progress:
-  total_phases: 6
-  completed_phases: 3
-  total_plans: 17
-  completed_plans: 11
+  total_phases: 9
+  completed_phases: 4
+  total_plans: 20
+  completed_plans: 12
 ---
 
 # Project State
@@ -18,15 +18,15 @@ progress:
 ## Current Status
 
 - **Milestone:** Phase 3 — Turn-by-Turn Adaptive
-- **Current Phase:** 05
-- **Phase Status:** ✅ Complete — Phase 4 all 4 plans done, 970 tests passing
-- **Last Updated:** 2026-03-29
+- **Current Phase:** 07
+- **Phase Status:** Phase 7 Plan 1 complete — 1031 tests passing
+- **Last Updated:** 2026-03-30
 
 ## Active Phase
 
-**Phase 4: Rollout Hardening — COMPLETE**
+**Phase 7: Core Pipeline Wiring — IN PROGRESS (1/1 plans complete)**
 
-Goal: Canary rollout infrastructure, offline replay evaluator, online metrics/alerting, operator runbook.
+Goal: Wire all scoring and retrieval paths end-to-end so the BMXF pipeline actually executes per the source plan.
 
 ## Phase Progress
 
@@ -41,8 +41,8 @@ Goal: Canary rollout infrastructure, offline replay evaluator, online metrics/al
 
 ## Session Continuity
 
-Last session: 2026-03-29T18:41:08Z
-Stopped at: Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)
+Last session: 2026-03-30T00:57:20.615Z
+Stopped at: Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing
 
 ## Context Notes
 
@@ -79,3 +79,9 @@ Stopped at: Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RU
 | 2026-03-29 | FileRetrievalLogger.log_alert uses lazy import time as _time (04-03) | Avoids module-level name collision; consistent with existing patterns |
 | 2026-03-29 | AlertChecker takes MetricSnapshot not RollingMetrics (04-04) | Separates computation from alerting; enables unit testing without time.monotonic() |
 | 2026-03-29 | pct() uses min(int(p*n), n-1) index matching replay.py (04-04) | Consistent percentile calculation across offline replay and online RollingMetrics |
+| 2026-03-30 | top_k default 10→15 per source plan line 496 (07-01) | Matches synthesized plan canonical value |
+| 2026-03-30 | NAMESPACE_ALIASES uses exact server-name keys not substring fragments (07-01) | Source plan lines 584-597; 'gh' no longer matches 'github' |
+| 2026-03-30 | BMXFRetriever dual indexes: env (alpha=0.5) + nl (alpha=None) (07-01) | Source plan lines 287, 297; query_mode selects index |
+| 2026-03-30 | Routing dispatch uses ROUTING_TOOL_NAME not ROUTING_TOOL_KEY (07-01) | Model calls "request_tool" not "__routing__request_tool" |
+| 2026-03-30 | dynamic_k evidence-based not config.max_k heuristic (07-01) | Source plan line 292; 15 base, 18 polyglot, cap 20 |
+| 2026-03-30 | Tier 6 caps at 12 tools (not 30); anchor seeding replaced by fallback ladder (07-01) | Source plan line 898; anchor concept replaced by scoring-based active set |
