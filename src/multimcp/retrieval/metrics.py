@@ -125,11 +125,13 @@ class RollingMetrics:
 
         # Phase 9: rescore-rate computation from timestamp deque.
         # rescore_rate_30m: all events in window / window_seconds
-        # rescore_rate_10m: events in last 600s / 600s (alert trigger window)
-        ten_min_cutoff = now - 600
+        # rescore_rate_10m: events in last 600s / 600s (alert trigger window),
+        # but constrained by the configured rolling window to avoid understating the rate
+        ten_min_window = min(600.0, self._window)
+        ten_min_cutoff = now - ten_min_window
         rescore_count_10m = sum(1 for t in self._rescore_times if t >= ten_min_cutoff)
         snap.rescore_rate_30m = len(self._rescore_times) / self._window if self._rescore_times else 0.0
-        snap.rescore_rate_10m = rescore_count_10m / 600.0 if rescore_count_10m > 0 else 0.0
+        snap.rescore_rate_10m = rescore_count_10m / ten_min_window if rescore_count_10m > 0 else 0.0
 
         return snap
 
