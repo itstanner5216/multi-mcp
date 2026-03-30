@@ -133,52 +133,49 @@ def scan_root(
             return
 
         try:
-            entries = list(path.iterdir())
+            for entry in path.iterdir():
+                if time.monotonic() >= deadline:
+                    partial = True
+                    return
+                if entries_visited >= max_entries:
+                    partial = True
+                    return
+
+                entries_visited += 1
+                name = entry.name
+
+                # Skip symlinks to prevent escape from root
+                if entry.is_symlink():
+                    continue
+
+                # Skip denied files immediately
+                if _is_denied(name):
+                    continue
+
+                rel_path = str(entry.relative_to(root_path))
+
+                if entry.is_file():
+                    if name in ALL_ALLOWED_FILES:
+                        found_files.add(rel_path)
+                    elif README_PATTERN.match(name) and not readme_lines:
+                        # Read first 40 lines of README
+                        try:
+                            with open(entry, encoding="utf-8", errors="ignore") as f:
+                                readme_lines = [f.readline() for _ in range(40)]
+                        except OSError:
+                            pass
+
+                elif entry.is_dir():
+                    # Special: .github/workflows directory — add as CI signal
+                    if rel_path in {".github/workflows", ".github"} or name in {
+                        ".github", ".circleci", "migrations",
+                    }:
+                        found_files.add(rel_path)
+                    _walk(entry, depth + 1)
         except PermissionError:
             return
         except OSError:
             return
-
-        for entry in entries:
-            if time.monotonic() >= deadline:
-                partial = True
-                return
-            if entries_visited >= max_entries:
-                partial = True
-                return
-
-            entries_visited += 1
-            name = entry.name
-
-            # Skip symlinks to prevent escape from root
-            if entry.is_symlink():
-                continue
-
-            # Skip denied files immediately
-            if _is_denied(name):
-                continue
-
-            rel_path = str(entry.relative_to(root_path))
-
-            if entry.is_file():
-                if name in ALL_ALLOWED_FILES:
-                    found_files.add(rel_path)
-                elif README_PATTERN.match(name) and not readme_lines:
-                    # Read first 40 lines of README
-                    try:
-                        with open(entry, encoding="utf-8", errors="ignore") as f:
-                            readme_lines = [f.readline() for _ in range(40)]
-                    except OSError:
-                        pass
-
-            elif entry.is_dir():
-                # Special: .github/workflows directory — add as CI signal
-                if rel_path in {".github/workflows", ".github"} or name in {
-                    ".github", ".circleci", "migrations",
-                }:
-                    found_files.add(rel_path)
-                _walk(entry, depth + 1)
-
     _walk(root_path, depth=0)
 
     if partial:
