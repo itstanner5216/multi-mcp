@@ -9,6 +9,7 @@ Safety invariants:
 from __future__ import annotations
 
 import fnmatch
+import functools
 import hashlib
 import time
 from pathlib import Path
@@ -262,7 +263,7 @@ class TelemetryScanner:
         to avoid blocking the event loop with filesystem I/O.
         """
         return await anyio.to_thread.run_sync(
-            lambda: self.scan_roots(root_uris, root_names)
+            functools.partial(self.scan_roots, root_uris, root_names)
         )
 
 

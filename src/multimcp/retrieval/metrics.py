@@ -129,9 +129,7 @@ class RollingMetrics:
         # Phase 9: rescore-rate computation from timestamp deque.
         # Evict stale rescore timestamps outside the 30-minute window first,
         # so old rebuilds don't keep rates artificially high during idle periods.
-        rescore_cutoff = now - self._window
-        while self._rescore_times and self._rescore_times[0] < rescore_cutoff:
-            self._rescore_times.popleft()
+        self._evict_rescore(now)
 
         # rescore_rate_30m: all events in window / window_seconds
         # rescore_rate_10m: events in last 600s / 600s (alert trigger window),
