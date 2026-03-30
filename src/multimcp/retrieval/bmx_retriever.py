@@ -191,7 +191,7 @@ class BMXFRetriever(ToolRetriever):
         if index is None or not context.query.strip():
             return [
                 ScoredTool(
-                    tool_key=m.tool.name,
+                    tool_key=f"{m.server_name}__{m.tool.name}",
                     tool_mapping=m,
                     score=1.0,
                     tier="full",
