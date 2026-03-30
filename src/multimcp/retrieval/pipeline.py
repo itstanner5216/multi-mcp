@@ -609,8 +609,9 @@ class RetrievalPipeline:
                 scored_tools = _weighted_rrf(env_ranked, conv_ranked, fusion_alpha)
                 fallback_tier = 1
             except Exception:
+            except Exception as e:
+                self.logger.warning("Tier 1 scoring failed: %s", e, exc_info=True)
                 scored_tools = None
-
         # Tier 2: BMXF env-only
         if scored_tools is None and self._index_available() and env_query:
             try:
