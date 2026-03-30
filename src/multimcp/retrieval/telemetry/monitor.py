@@ -71,7 +71,7 @@ class RootMonitor:
             significance = 0.0
         else:
             try:
-                evidence = self._scanner.scan()
+                evidence = self._scanner.scan_roots()
                 significance = self._estimate_significance(evidence)
             except Exception:
                 significance = 0.0
