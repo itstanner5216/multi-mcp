@@ -6,6 +6,12 @@ score: 14/14 must-haves verified
 re_verification: false
 ---
 
+> **SUPERSEDED (Phase 9 gap closure):** This verification document contains claims
+> identified as overstated by `docs/implementation-audit-final.md` (findings V-01
+> through V-06). The specific claims below have been corrected by Phases 7-9 gap
+> closure and re-verified with end-to-end tests. See Phase 9 test suite for
+> replacement verification.
+
 # Phase 4: Rollout Hardening Verification Report
 
 **Phase Goal:** Gradual canary rollout infrastructure with shadow -> canary -> GA promotion gates, online monitoring, and operator documentation.
@@ -30,7 +36,7 @@ re_verification: false
 | 9 | RankingEvent.group set before emission | VERIFIED | pipeline.py line 165: `group=group` in RankingEvent constructor |
 | 10 | logging.py has log_alert() in ABC, NullLogger, FileRetrievalLogger | VERIFIED | logging.py lines 47-52 (ABC), 84-90 (NullLogger), 131-146 (FileRetrievalLogger) |
 | 11 | metrics.py has RollingMetrics with 30-min window | VERIFIED | metrics.py RollingMetrics.__init__ default window_seconds=1800 |
-| 12 | metrics.py has AlertChecker with correct thresholds | VERIFIED | ALERT_DESCRIBE_RATE=0.10, ALERT_TIER56_RATE=0.05, ALERT_P95_MS=75.0 |
+| 12 | metrics.py has AlertChecker with correct thresholds | VERIFIED | ALERT_DESCRIBE_RATE=0.10, ALERT_TIER56_RATE=0.05, ALERT_P95_MS=75.0 | **V-06 CORRECTED:** threshold constants were verified, but `ALERT_RESCORE_RATE` was defined but never used in `AlertChecker.check()` — the rescore-rate check was a dead code path. Fixed in Phase 9 (09-01: `rescore_threshold` param added to `AlertChecker.__init__()`, rescore-rate alert wired into `check()`). Re-verified by `test_alert_rescore_rate.py`.|
 | 13 | tests/test_rollout.py, test_replay_evaluator.py, test_canary_pipeline.py, test_metrics.py all exist and pass | VERIFIED | 54 tests collected; all 54 pass |
 | 14 | docs/OPERATOR-RUNBOOK.md exists with rollout procedure, alert response, rollback steps | VERIFIED | File exists; contains Rollout Procedure, Alert Response, Emergency Rollback sections |
 

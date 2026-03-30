@@ -12,6 +12,7 @@ from mcp import types
 
 from .base import ToolRetriever
 from .logging import RetrievalLogger
+from .metrics import RollingMetrics
 from .models import (
     RankingEvent,
     RetrievalConfig,
@@ -153,6 +154,7 @@ class RetrievalPipeline:
         ranker: Optional["RelevanceRanker"] = None,
         assembler: Optional["TieredAssembler"] = None,
         telemetry_scanner: Optional["TelemetryScanner"] = None,
+        rolling_metrics: Optional[RollingMetrics] = None,
     ) -> None:
         self.retriever = retriever
         self.session_manager = session_manager
@@ -162,6 +164,9 @@ class RetrievalPipeline:
         self.ranker = ranker
         self.assembler = assembler
         self._telemetry_scanner = telemetry_scanner
+        # Phase 9: optional RollingMetrics instance for rescore-rate tracking.
+        # When set, rebuild_catalog() records each rebuild as a rescore event.
+        self._rolling_metrics = rolling_metrics
         self._session_turns: dict[str, int] = {}  # session_id -> current turn number
         # Telemetry / roots state
         self._session_roots: dict[str, list[str]] = {}
@@ -785,6 +790,9 @@ class RetrievalPipeline:
 
         Mid-turn guard (CF-4): if any session is currently mid-turn, defer the
         rebuild to the next get_tools_for_list() call via _pending_rebuild.
+
+        Phase 9: Records a rescore event on _rolling_metrics when configured,
+        enabling rescore-rate alerting via AlertChecker.
         """
         if any(self._in_turn.values()):
             self._pending_rebuild = dict(registry)
@@ -792,6 +800,9 @@ class RetrievalPipeline:
         rebuild = getattr(self.retriever, "rebuild_index", None)
         if callable(rebuild):
             rebuild(registry)
+        # Phase 9: record this rebuild as a rescore event for rate monitoring
+        if self._rolling_metrics is not None:
+            self._rolling_metrics.record_rescore()
 
     async def on_tool_called(
         self,
