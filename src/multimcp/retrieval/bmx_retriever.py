@@ -155,11 +155,13 @@ class BMXFRetriever(ToolRetriever):
         self._index = env_index
         self._doc_by_key = {doc.tool_key: doc for doc in snapshot.docs}
 
-        logger.debug(
-            "BMXFRetriever: rebuilt index for %d tools (snapshot version=%s, hash=%s…)",
-            len(snapshot.docs),
-            snapshot.version,
-            snapshot.schema_hash[:8],
+        logger.bind(
+            tool_count=len(snapshot.docs),
+            snapshot_version=snapshot.version,
+            schema_hash_prefix=snapshot.schema_hash[:8],
+        ).debug(
+            "BMXFRetriever: rebuilt index for {tool_count} tools "
+            "(snapshot version={snapshot_version}, hash={schema_hash_prefix}…)"
         )
 
     # ── Version accessor ─────────────────────────────────────────────────────
