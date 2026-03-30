@@ -79,7 +79,7 @@ fi
 
 # Set defaults
 HOST="${MULTI_MCP_HOST:-0.0.0.0}"
-PORT="${MULTI_MCP_PORT:-8085}"
+PORT="${MULTI_MCP_PORT:-8083}"
 CONFIG="${MULTI_MCP_CONFIG:-msc/mcp.json}"
 
 echo "Configuration:"

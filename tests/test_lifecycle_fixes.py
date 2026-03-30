@@ -26,6 +26,7 @@ def _make_mgr(**overrides):
     mgr._supervision_tasks = {}
     mgr._lifecycle_tasks = {}
     mgr._shutdown_events = {}
+    mgr._reconnect_backoff = {}
     for k, v in overrides.items():
         setattr(mgr, k, v)
     return mgr

@@ -57,6 +57,12 @@ DB_FILES: set[str] = {"schema.prisma", "schema.sql", "migrations", "alembic.ini"
 MAX_FAMILY_CONTRIBUTION: float = 0.35  # No single family > 35% of total token weight sum
 MAX_README_TOKENS: int = 20            # Cap readme-derived tokens
 
+_TECH_WORDS = re.compile(
+    r"\b(docker|kubernetes|k8s|postgres|mysql|redis|mongodb|react|vue|angular"
+    r"|django|flask|fastapi|rails|spring|rust|golang|typescript|python|node)\b",
+    re.IGNORECASE,
+)
+
 
 def build_tokens(
     found_files: set[str],
@@ -123,14 +129,9 @@ def build_tokens(
 
 def _extract_readme_tokens(lines: list[str]) -> dict[str, float]:
     """Extract keyword tokens from README lines (tech-stack words only)."""
-    TECH_WORDS = re.compile(
-        r"\b(docker|kubernetes|k8s|postgres|mysql|redis|mongodb|react|vue|angular"
-        r"|django|flask|fastapi|rails|spring|rust|golang|typescript|python|node)\b",
-        re.IGNORECASE,
-    )
     found: dict[str, float] = {}
     for line in lines:
-        for match in TECH_WORDS.finditer(line):
+        for match in _TECH_WORDS.finditer(line):
             word = match.group(0).lower()
             found[word] = 1.0
     return found
@@ -151,16 +152,25 @@ def _apply_family_cap(tokens: dict[str, float]) -> dict[str, float]:
         family = tok.split(":")[0] + ":"
         families.setdefault(family, []).append((tok, w))
 
-    max_per_family = total * MAX_FAMILY_CONTRIBUTION
-    result: dict[str, float] = {}
-    for family_tokens in families.values():
-        family_sum = sum(w for _, w in family_tokens)
-        if family_sum > max_per_family:
-            # Scale down proportionally
-            scale = max_per_family / family_sum
-            for tok, w in family_tokens:
-                result[tok] = w * scale
-        else:
-            for tok, w in family_tokens:
-                result[tok] = w
+    result = dict(tokens)
+    # Iteratively enforce family cap until convergence (max 5 passes).
+    # Each pass recomputes the total after scaling, ensuring no family
+    # exceeds MAX_FAMILY_CONTRIBUTION of the *final* total.
+    for _ in range(5):
+        current_total = sum(result.values())
+        if current_total == 0:
+            break
+        cap = current_total * MAX_FAMILY_CONTRIBUTION
+        changed = False
+        for family_key, family_tokens in families.items():
+            family_sum = sum(result[tok] for tok, _ in family_tokens if tok in result)
+            if family_sum > cap:
+                scale = cap / family_sum
+                for tok, _ in family_tokens:
+                    if tok in result:
+                        result[tok] *= scale
+                changed = True
+        if not changed:
+            break
+
     return result

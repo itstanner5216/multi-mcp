@@ -68,10 +68,10 @@ class TestWeightedRRF:
         conv = [_make_tool("t1"), _make_tool("t2")]
         alpha = 0.5
         result = weighted_rrf(env, conv, alpha)
-        # t1: rank 0 in both -> score = 0.5/(10+0) + 0.5/(10+0) = 0.1
-        assert result[0].score == pytest.approx(0.1, abs=1e-6)
-        # t2: rank 1 in both -> score = 0.5/11 + 0.5/11 ~= 0.0909
-        assert result[1].score == pytest.approx(1 / 11, abs=1e-6)
+        # t1: rank 1 in both -> score = 0.5/(10+1) + 0.5/(10+1) = 1/11
+        assert result[0].score == pytest.approx(1.0 / 11, abs=1e-6)
+        # t2: rank 2 in both -> score = 0.5/12 + 0.5/12 = 1/12
+        assert result[1].score == pytest.approx(1.0 / 12, abs=1e-6)
 
     def test_output_sorted_descending(self) -> None:
         env = [_make_tool(f"t{i}") for i in range(5)]

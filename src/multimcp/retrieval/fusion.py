@@ -28,13 +28,13 @@ def weighted_rrf(
     if not env_ranked and not conv_ranked:
         return []
 
-    env_ranks = {t.tool_key: i for i, t in enumerate(env_ranked)}
-    conv_ranks = {t.tool_key: i for i, t in enumerate(conv_ranked)}
+    env_ranks = {t.tool_key: i + 1 for i, t in enumerate(env_ranked)}
+    conv_ranks = {t.tool_key: i + 1 for i, t in enumerate(conv_ranked)}
     all_keys = set(env_ranks) | set(conv_ranks)
 
     # Penalty rank for tools absent from a list
-    env_max = len(env_ranked)
-    conv_max = len(conv_ranked)
+    env_max = len(env_ranked) + 1
+    conv_max = len(conv_ranked) + 1
 
     # Collect tool_mapping references: env takes precedence, conv fills gaps
     tool_map: dict[str, object] = {}
@@ -57,7 +57,7 @@ def weighted_rrf(
             )
         )
 
-    fused.sort(key=lambda s: s.score, reverse=True)
+    fused.sort(key=lambda s: (-s.score, s.tool_key))
     return fused
 
 

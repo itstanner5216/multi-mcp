@@ -288,9 +288,11 @@ class TestRetrieve:
 
 class TestAliasGeneration:
     def test_namespace_alias_expansion(self):
+        # NAMESPACE_ALIASES now uses exact server name keys (source plan lines 584-597)
+        # "filesystem" is the canonical key; "fs" is not a key
         retriever = BMXFRetriever()
-        aliases = retriever._generate_aliases("list_files", "fs")
-        for synonym in NAMESPACE_ALIASES["fs"]:
+        aliases = retriever._generate_aliases("list_files", "filesystem")
+        for synonym in NAMESPACE_ALIASES["filesystem"]:
             for token in synonym.split():
                 assert token in aliases
 
@@ -303,7 +305,8 @@ class TestAliasGeneration:
 
     def test_no_duplicate_tokens(self):
         retriever = BMXFRetriever()
-        aliases = retriever._generate_aliases("read_file", "fs")
+        # "filesystem" is the correct exact key; "fs" no longer matches
+        aliases = retriever._generate_aliases("read_file", "filesystem")
         tokens = aliases.split()
         assert len(tokens) == len(set(tokens))
 
@@ -311,7 +314,7 @@ class TestAliasGeneration:
         retriever = BMXFRetriever()
         aliases = retriever._generate_aliases("do_something_strange", "xyz_service")
         # Should return empty string when no aliases match
-        assert isinstance(aliases, str)
+        assert aliases == ""
 
     def test_hyphen_and_underscore_normalized(self):
         retriever = BMXFRetriever()

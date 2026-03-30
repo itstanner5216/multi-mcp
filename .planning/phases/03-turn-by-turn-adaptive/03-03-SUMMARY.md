@@ -78,8 +78,8 @@ All plan verification checks pass:
 from src.multimcp.retrieval.telemetry.monitor import RootMonitor  # OK
 from src.multimcp.retrieval.telemetry import RootMonitor  # OK
 RootMonitor().poll_interval == 5.0  # True
-RootMonitor(min_debounce_s=0.0); .record_change(0.8); .check_for_changes() == True  # True
-.acknowledge(); .check_for_changes() == False  # True (in debounce)
+m = RootMonitor(min_debounce_s=0.0); m.record_change(0.8); m.check_for_changes() == True  # True
+m.acknowledge(); m.check_for_changes() == False  # True (in debounce)
 ```
 
 Test results: **23/23 telemetry monitor tests pass**, **65/65 total telemetry tests pass**, **70/70 Phase 2 retrieval pipeline tests pass**.

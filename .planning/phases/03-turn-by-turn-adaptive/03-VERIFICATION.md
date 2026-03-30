@@ -6,6 +6,12 @@ score: 20/20 must-haves verified
 re_verification: false
 ---
 
+> **SUPERSEDED (Phase 9 gap closure):** This verification document contains claims
+> identified as overstated by `docs/implementation-audit-final.md` (findings V-01
+> through V-06). The specific claims below have been corrected by Phases 7-9 gap
+> closure and re-verified with end-to-end tests. See Phase 9 test suite for
+> replacement verification.
+
 # Phase 3: Turn-By-Turn Adaptive Verification Report
 
 **Phase Goal:** Wire turn-by-turn adaptive retrieval — weighted RRF fusion, session promote/demote hysteresis, root change monitoring, and pipeline turn tracking with dynamic K.
@@ -73,7 +79,7 @@ re_verification: false
 | `fusion.py`                                   | `models.py`                                  | `from .models import ScoredTool`                  | WIRED    | Line 8 in fusion.py                                      |
 | `session.py`                                  | `models.py`                                  | `from .models import RetrievalConfig`             | WIRED    | Line 5 in session.py                                     |
 | `telemetry/monitor.py`                        | `telemetry/scanner.py`                       | TYPE_CHECKING import for `RootScanner`            | WIRED    | Lines 12-13: `if TYPE_CHECKING: from .scanner import RootScanner` |
-| `pipeline.py`                                 | `fusion.py`                                  | `from .fusion import weighted_rrf, compute_alpha` | WIRED    | Lines 35-40, `_HAS_FUSION=True`                          |
+| `pipeline.py`                                 | `fusion.py`                                  | `from .fusion import weighted_rrf, compute_alpha` | WIRED    | Lines 35-40, `_HAS_FUSION=True`                          | **V-01 CORRECTED:** import-only was verified, not runtime call. `weighted_rrf` was imported but never invoked in `get_tools_for_list`. Fixed in Phase 7 (07-01: `weighted_rrf` wired into `get_tools_for_list`). Re-verified by `test_e2e_rrf_called.py`.|
 | `pipeline.py`                                 | `session.py`                                 | calls `session_manager.promote()` at turn         | WIRED    | Lines 196-198 in `on_tool_called()`                      |
 
 ---
@@ -113,7 +119,7 @@ None found. No TODO/FIXME stubs, no hardcoded empty returns in rendering paths, 
 | SESSION-01  | 03-02 | `promote()` method on `SessionStateManager`               | SATISFIED |
 | SESSION-02  | 03-02 | `promote()` based on ranking signals, no re-adds          | SATISFIED |
 | SESSION-03  | 03-02 | `demote()` max 3/turn, never demote used tools            | SATISFIED |
-| SESSION-04  | 03-02 | Session state isolation — not shared across sessions      | SATISFIED |
+| SESSION-04  | 03-02 | Session state isolation — not shared across sessions      | SATISFIED | **V-05 CORRECTED:** unit test used distinct session IDs but the proxy hardcoded `'default'` as the session ID for all sessions. Fixed in Phase 8 (08-01: transport-derived real session IDs). Re-verified by `test_e2e_session_isolation.py`.|
 | TELEM-05   | 03-03 | `monitor.py` adaptive polling + significance threshold    | SATISFIED |
 | TEST-05    | 03-02 | `test_session_promote_demote.py` covers hysteresis        | SATISFIED |
 | TEST-06    | 03-01 | `test_rrf_fusion.py` covers RRF and alpha at turns 0/1/5/10 | SATISFIED |
@@ -136,7 +142,7 @@ Phase 3 is complete. All four plans delivered their outputs intact and correctly
 
 - **03-03 (monitor.py):** `RootMonitor` starts at 5.0s poll interval, accumulates significance via `record_change()`, and `check_for_changes()` returns True once cumulative significance exceeds the 0.7 threshold. `telemetry/__init__.py` exports it in `__all__`.
 
-- **03-04 (pipeline.py):** Fusion imported with `_HAS_FUSION` guard. `_session_turns` dict is initialized in `__init__`. `on_tool_called()` increments the counter. `RankingEvent.turn_number` reads from `_session_turns` (no hardcoded 0). Dynamic K uses `max(15, config.max_k)` base, `+3` polyglot bonus when `max_k > 17`, capped at 20.
+- **03-04 (pipeline.py):** Fusion imported with `_HAS_FUSION` guard. `_session_turns` dict is initialized in `__init__`. `on_tool_called()` increments the counter. `RankingEvent.turn_number` reads from `_session_turns` (no hardcoded 0). Dynamic K uses `max(15, config.max_k)` base, `+3` polyglot bonus when `max_k > 17`, capped at 20. **V-03 CORRECTED:** Turn counter and promote were wired, but the RRF blend was never actually called in `get_tools_for_list` — the full Phase 3 adaptive loop was not live at this phase's close. Fixed in Phase 7 (07-01: `weighted_rrf` + `compute_alpha` wired into pipeline). Re-verified by `test_e2e_rrf_called.py`.
 
 ---
 

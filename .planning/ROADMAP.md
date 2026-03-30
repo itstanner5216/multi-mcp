@@ -1,6 +1,6 @@
 # Roadmap — Multi-MCP Phase 2: BMXF Routing
 
-**6 phases** | **32 requirements mapped** | All v1 requirements covered ✓
+**9 phases** | **32 requirements mapped** | Gap closure phases 7-9 address 15 audit findings from `docs/implementation-audit-final.md`
 
 | # | Phase | Goal | Requirements | Success Criteria |
 |---|-------|------|--------------|------------------|
@@ -8,8 +8,11 @@
 | 2 | Safe Lexical MVP | 2/3 | In Progress|  |
 | 3 | Turn-by-Turn Adaptive | 4/4 | Complete   | 2026-03-29 |
 | 4 | Rollout Hardening | 2/4 | In Progress|  |
-| 5 | Post-GA Learning | PPMI-weighted scoring; exploration injection | v2 requirements (PPMI, exploration, co-occurrence) | 2 |
-| 6 | Verification & Compliance | All 6 core invariants enforced by automated tests; trust boundary audit passes | VERIFY-01–06 | 6 |
+| 5 | Post-GA Learning | PPMI-weighted scoring; exploration injection | v2 requirements (PPMI, exploration, co-occurrence) | ⛔ BLOCKED |
+| 6 | Verification & Compliance | All 6 core invariants enforced by automated tests; trust boundary audit passes | VERIFY-01–06 | ⛔ BLOCKED |
+| **7** | **Core Pipeline Wiring** | **Scoring/retrieval paths execute end-to-end per source plan** | **ROUTER-01, FALLBACK-01–02, FUSION-01–03, SCORE-03–04** | **Gap Closure** |
+| **8** | **Session State & Turn Boundary** | **Session isolation, turn-boundary discipline, state management** | **SESSION-01–04, OBS-02** | **Gap Closure** |
+| **9** | **Rollout Activation & Observability** | **Pipeline enabled via config, rollout gates correct, logging live** | **WIRE-01–02, CATALOG-04** | **Gap Closure** |
 
 ---
 
@@ -140,13 +143,13 @@ Plans:
 
 ---
 
-## Phase 5: Post-GA Learning
+## Phase 5: Post-GA Learning — ⛔ BLOCKED
 
 **Goal:** PPMI-weighted token scoring replaces static heuristics after sufficient session data.
 
 **Requirements:** v2 requirements (PPMI reweighting, exploration injection, co-occurrence)
 
-**Note:** Phase 5 is ongoing — begins after Phase 4 GA with sufficient usage logs (>50 sessions). Neural reranker considered if tool count exceeds 500.
+**Status:** BLOCKED — Plans were written against the deviated codebase. Must re-plan after gap closure phases 7-9 complete and codebase aligns with source of truth (`docs/PHASE2-SYNTHESIZED-PLAN.md`).
 
 **Plans:** 3 plans
 
@@ -173,11 +176,13 @@ Plans:
 
 ---
 
-## Phase 6: Verification & Compliance
+## Phase 6: Verification & Compliance — ⛔ BLOCKED
 
 **Goal:** All 6 core invariants enforced by automated tests. Trust boundary audit passes. Full-stack lifecycle regression suite guards against future regressions.
 
 **Requirements:** VERIFY-01, VERIFY-02, VERIFY-03, VERIFY-04, VERIFY-05, VERIFY-06
+
+**Status:** BLOCKED — Tests must verify the corrected codebase, not the deviated one. Must re-plan after gap closure phases 7-9 complete.
 
 **Plans:** 1 plan
 
@@ -199,3 +204,92 @@ Plans:
 4. Every turn is pinned to exactly one ToolCatalogSnapshot.version
 5. SessionRoutingState is never shared across concurrent sessions
 6. Every fallback tier (1-6) produces a bounded, valid active set with routing tool
+
+---
+
+## Phase 7: Core Pipeline Wiring — Gap Closure
+
+**Goal:** All scoring and retrieval paths execute end-to-end per source plan. The core BMXF scoring, telemetry-driven turn-zero ranking, RRF fusion, and 6-tier fallback ladder are wired into the live pipeline — no dead code, no alphabetical fallback.
+
+**Gap Closure:** F-01, F-03, F-04, F-05, F-13, F-14, F-15
+**Requirements:** ROUTER-01, FALLBACK-01, FALLBACK-02, FUSION-01, FUSION-02, FUSION-03, SCORE-03, SCORE-04
+
+Plans:
+- [x] 07-01-PLAN.md — Fix routing dispatch + wire telemetry/retrieve/RRF/fallback ladder + fix aliases/top_k/alpha_override
+
+**Updated files:**
+- `src/multimcp/mcp_proxy.py` — routing tool dispatch fix (F-01)
+- `src/multimcp/retrieval/pipeline.py` — wire retrieve(), weighted_rrf(), compute_alpha(), 6-tier fallback, fallback_tier tracking (F-03, F-04, F-05)
+- `src/multimcp/retrieval/bmx_retriever.py` — fix NAMESPACE_ALIASES, set alpha_override=0.5 for env query (F-13, F-14)
+- `src/multimcp/retrieval/models.py` — top_k default 15 (F-15)
+
+**Success criteria (from source plan):**
+1. Routing tool callable end-to-end: model calls `"request_tool"` → proxy dispatches → response returned (source plan line 999, Core Invariant line 321)
+2. Turn-zero ranking uses telemetry-derived env query via BMXF, not alphabetical sort (source plan lines 273-293)
+3. `weighted_rrf()` and `compute_alpha()` called every turn in `get_tools_for_list()` (source plan lines 295-307)
+4. All 6 fallback tiers reachable; no tier exposes more than 20 direct tools; Tier 6 = universal 12-tool set + routing tool (source plan lines 889-920)
+5. `fallback_tier` in `RankingEvent` reflects actual tier used (source plan line 482)
+
+---
+
+## Phase 8: Session State & Turn Boundary — Gap Closure
+
+**Goal:** Session isolation enforced with real session IDs. All promote/demote operations and tools/list_changed notifications occur at turn boundaries only. SessionRoutingState tracks per-session state. Catalog snapshot pinning enforced.
+
+**Gap Closure:** F-02, F-07, F-08, F-10, F-12
+**Requirements:** SESSION-01, SESSION-02, SESSION-03, SESSION-04, OBS-02
+**Depends on:** Phase 7 (scoring must work for rank-based promotion/demotion)
+
+Plans:
+- [ ] 08-01-PLAN.md — Wire real session IDs + turn-boundary guard + SessionRoutingState + catalog pinning + demote/promote wiring
+
+**Updated files:**
+- `src/multimcp/mcp_proxy.py` — extract real session_id, turn-boundary emit of tools/list_changed (F-02, F-07)
+- `src/multimcp/retrieval/pipeline.py` — instantiate SessionRoutingState, catalog pinning, demote() calls, K-2 promotion (F-08, F-10, F-12)
+
+**Success criteria (from source plan):**
+1. Each MCP session gets a unique session_id; no hardcoded "default" (source plan lines 324-325)
+2. Active set and router enum do not change during a model turn (Core Invariant line 323: "Mid-turn stability")
+3. `SessionRoutingState` instantiated per session with all fields from source plan lines 450-467
+4. Every turn pinned to one `ToolCatalogSnapshot.version` (Core Invariant line 324: "Snapshot pinning")
+5. `demote()` called at turn boundaries; rank below K+3 for 2 consecutive turns, max 3 per turn (source plan line 305)
+6. Promote: rank within K-2 OR used via router 2/3 last turns (source plan line 304)
+
+---
+
+## Phase 9: Rollout Activation & Observability — Gap Closure
+
+**Goal:** Pipeline enabled via YAML config path (not hardcoded disabled). Shadow/canary rollout wired into server runtime. Cutover gates compute correct metrics with correct semantics.
+
+**Gap Closure:** F-06, F-09, F-11
+**Requirements:** WIRE-01, WIRE-02, CATALOG-04
+**Depends on:** Phase 8 (pipeline must produce correct results before enabling)
+
+Plans:
+- [ ] 09-01-PLAN.md — YAML retrieval config + config-driven pipeline init + Recall@15 + describe_rate gate fix + ALERT_RESCORE_RATE
+
+**Updated files:**
+- `src/multimcp/yaml_config.py` — expose retrieval config fields (F-06, F-09)
+- `src/multimcp/multi_mcp.py` — config-driven pipeline init, FileRetrievalLogger (F-06, F-09)
+- `src/multimcp/retrieval/replay.py` — Recall@15, describe_rate gate fix (F-11)
+- `src/multimcp/retrieval/metrics.py` — wire ALERT_RESCORE_RATE into check() (F-11)
+
+**Success criteria (from source plan):**
+1. YAML config controls `enabled`, `shadow_mode`, `scorer`, `max_k`, `canary_percentage`, `rollout_stage` (source plan lines 496-506, 963-971)
+2. Default config: `enabled=False, shadow_mode=False` per source plan; operators enable via YAML without code changes (source plan lines 963-971)
+3. `FileRetrievalLogger` writes JSONL when log path configured (source plan lines 942-955)
+4. `Recall@15` computed in cutover gate checks (source plan line 975)
+5. Describe-rate gate uses baseline comparison with >=20% drop requirement (source plan line 975)
+6. `ALERT_RESCORE_RATE` checked in `AlertChecker.check()` (source plan lines 957-961)
+
+---
+
+## Execution Order
+
+```
+Phase 7 (Core Pipeline Wiring)
+  → Phase 8 (Session State & Turn Boundary) [depends on 7]
+    → Phase 9 (Rollout Activation) [depends on 8]
+      → Re-plan Phase 5 (Post-GA Learning) against corrected codebase
+        → Re-plan Phase 6 (Verification) against corrected codebase
+```

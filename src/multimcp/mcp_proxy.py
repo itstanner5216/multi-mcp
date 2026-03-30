@@ -1,5 +1,8 @@
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
+import hashlib
+import json
+import uuid
 from mcp import server, types
 from mcp.client.session import ClientSession
 from mcp.server.session import ServerSession
@@ -13,6 +16,32 @@ from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from src.multimcp.retrieval.pipeline import RetrievalPipeline
+
+
+def _hash_tool_list(tools: list) -> str:
+    """Stable hash of a tool list for change detection.
+
+    Includes name, description, and inputSchema to detect schema/description
+    changes even when tool names remain constant.
+    """
+
+    def _tool_fingerprint(t: Any) -> str:
+        """Build a fingerprint for a single tool based on name, description, and schema."""
+        name = getattr(t, "name", "")
+        description = getattr(t, "description", "")
+
+        schema_obj = None
+        for attr in ("input_schema", "inputSchema", "schema", "parameters"):
+            if hasattr(t, attr):
+                schema_obj = getattr(t, attr)
+                break
+
+        schema_repr = repr(schema_obj) if schema_obj is not None else ""
+        return "|".join([name, description, schema_repr])
+
+    fingerprints = sorted(_tool_fingerprint(t) for t in tools)
+    combined = ";;".join(fingerprints)
+    return hashlib.sha256(combined.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass
@@ -55,6 +84,10 @@ class MCPProxyServer(server.Server):
         self.audit_logger = AuditLogger()
         # Store active server session for sending notifications
         self._server_session: Optional[ServerSession] = None
+        # Stable per-session UUIDs keyed by object id of ServerSession (CF-1)
+        self._session_ids: dict[int, str] = {}
+        # Per-session hash of last emitted tool list for change detection
+        self._last_tool_list_hash: dict[str, str] = {}
         # Initialize trigger manager
         self.trigger_manager = MCPTriggerManager(client_manager)
         # Optional retrieval pipeline (None = passthrough, all tools returned)
@@ -64,6 +97,10 @@ class MCPProxyServer(server.Server):
         self._tool_failure_counts: dict[str, int] = {}
         # After this many consecutive transport failures, auto-quarantine the tool
         self.quarantine_threshold: int = 3
+        # Register roots/list_changed notification handler
+        self.notification_handlers[types.RootsListChangedNotification] = (
+            self._handle_roots_list_changed
+        )
 
     @classmethod
     async def create(cls, client_manager: MCPClientManager) -> "MCPProxyServer":
@@ -341,13 +378,72 @@ class MCPProxyServer(server.Server):
         }
 
     ## Tools capabilities
+    def _get_session_id(self) -> str:
+        """Derive a stable per-session UUID from the current MCP server session.
+
+        Raises RuntimeError if called with no active session. The proxy
+        must never call retrieval pipeline methods without a real session.
+        """
+        if self._server_session is None:
+            raise RuntimeError(
+                "No active MCP session; retrieval pipeline must not be called without a session"
+            )
+        obj_id = id(self._server_session)
+        if obj_id not in self._session_ids:
+            self._session_ids[obj_id] = uuid.uuid4().hex
+        return self._session_ids[obj_id]
+
+    async def _request_and_set_roots(self, session_id: str) -> None:
+        """Request roots/list from the client and pass URIs to the retrieval pipeline.
+
+        Called after session initialization and on roots/list_changed notifications.
+        Safe to call when no retrieval pipeline is configured or when the client
+        does not support roots — failures are logged and swallowed.
+        """
+        if self.retrieval_pipeline is None:
+            return
+        if self._server_session is None:
+            return
+        try:
+            result = await self._server_session.list_roots()
+            root_uris = [r.uri for r in result.roots]
+            await self.retrieval_pipeline.set_session_roots(session_id, root_uris)
+            self.logger.debug(
+                "🌳 Roots acquired for session {session_id}: {root_count} root(s)",
+                session_id=session_id,
+                root_count=len(root_uris),
+            )
+        except Exception as e:
+            # Client may not support roots — not an error condition
+            self.logger.debug("⚠️ roots/list not available: {error}", error=e)
+
+    async def _handle_roots_list_changed(self, notification: Any) -> None:
+        """Handle roots/list_changed notification from the client.
+
+        Re-requests roots/list and updates the pipeline's WorkspaceEvidence cache.
+        Source plan line 310: "roots/list_changed → immediate re-scan + re-score."
+        """
+        session_id = self._get_session_id()
+        await self._request_and_set_roots(session_id)
+
     async def _list_tools(self, _: Any) -> types.ServerResult:
         """Return the cached tool list. Tools are registered during initialization
         and updated dynamically when servers are added/removed.
         When a retrieval pipeline is configured, delegates to it for filtering."""
         if self.retrieval_pipeline is not None:
-            # TODO: extract real session_id from MCP request context when available
-            tools = await self.retrieval_pipeline.get_tools_for_list("default")
+            session_id = self._get_session_id()
+            # Build conversation context from session history
+            conv_parts: list[str] = []
+            conv_parts.extend(self.retrieval_pipeline.get_session_tool_history(session_id))
+            conv_parts.extend(self.retrieval_pipeline.get_session_argument_keys(session_id))
+            conv_parts.extend(self.retrieval_pipeline.get_session_router_describes(session_id))
+            conversation_context = " ".join(conv_parts)
+            tools = await self.retrieval_pipeline.get_tools_for_list(
+                session_id, conversation_context
+            )
+            # Track the current tool list hash, but do not emit tools/list_changed from here.
+            new_hash = _hash_tool_list(tools)
+            self._last_tool_list_hash[session_id] = new_hash
             return types.ServerResult(tools=tools)
         all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
@@ -376,12 +472,12 @@ class MCPProxyServer(server.Server):
 
         # Routing tool dispatch — must come before trigger manager and registry lookup
         try:
-            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_KEY, handle_routing_call
+            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_NAME, handle_routing_call
             _has_routing = True
         except ImportError:
             _has_routing = False
 
-        if _has_routing and tool_name == ROUTING_TOOL_KEY:
+        if _has_routing and tool_name == ROUTING_TOOL_NAME:
             name = arguments.get("name", "")
             describe = bool(arguments.get("describe", False))
             call_args = arguments.get("arguments", {})
@@ -399,7 +495,29 @@ class MCPProxyServer(server.Server):
                         name=actual_tool_name, arguments=call_args
                     ),
                 )
-                return await self._call_tool(proxy_req)
+                proxy_result = await self._call_tool(proxy_req)
+                # Record router proxy accounting (CF-2) — single write path
+                if self.retrieval_pipeline is not None:
+                    _sid: Optional[str] = None
+                    try:
+                        _sid = self._get_session_id()
+                        await self.retrieval_pipeline.on_tool_called(
+                            _sid, actual_tool_name, call_args, is_router_proxy=True
+                        )
+                    except Exception as exc:
+                        self.logger.bind(
+                            tool_name=actual_tool_name,
+                            session_id=_sid,
+                            error=str(exc),
+                        ).warning(
+                            "Failed to record router proxy tool call in retrieval pipeline",
+                        )
+                return proxy_result
+            # Record describe targets to pipeline session state so
+            # get_session_router_describes() has real data for conversation context.
+            if describe and name and self.retrieval_pipeline is not None:
+                session_id = self._get_session_id()
+                self.retrieval_pipeline.record_router_describe(session_id, name)
             return types.ServerResult(content=content)
 
         # Check for keyword triggers and auto-enable matching servers
@@ -471,14 +589,13 @@ class MCPProxyServer(server.Server):
                 # Success: reset circuit breaker for this tool
                 getattr(self, '_tool_failure_counts', {}).pop(tool_name, None)
 
-                # Notify retrieval pipeline of tool usage (progressive disclosure)
+                # Notify retrieval pipeline of tool usage (turn-boundary based)
                 if self.retrieval_pipeline is not None:
                     try:
-                        disclosed = await self.retrieval_pipeline.on_tool_called(
-                            "default", tool_name, arguments
+                        _session_id = self._get_session_id()
+                        await self.retrieval_pipeline.on_tool_called(
+                            _session_id, tool_name, arguments
                         )
-                        if disclosed:
-                            await self._send_tools_list_changed()
                     except Exception as e:
                         self.logger.warning(f"⚠️ Retrieval pipeline error on tool call: {e}")
 
@@ -837,8 +954,13 @@ class MCPProxyServer(server.Server):
             self._server_session = session
             self.logger.debug("🔗 Server session stored for notifications")
 
+            # Request roots/list after session init (Step A + C from source plan §5)
+            session_id = self._get_session_id()
+
             # Call parent's message handling loop
             async with anyio.create_task_group() as tg:
+                # Fire-and-forget roots request — non-blocking startup task
+                tg.start_soon(self._request_and_set_roots, session_id)
                 async for message in session.incoming_messages:
                     self.logger.debug(f"Received message: {message}")
 
@@ -851,4 +973,13 @@ class MCPProxyServer(server.Server):
                     )
 
             # Clear session when done
+            if self.retrieval_pipeline is not None and hasattr(self.retrieval_pipeline, "cleanup_session"):
+                try:
+                    _teardown_session_id = self._get_session_id()
+                    self.retrieval_pipeline.cleanup_session(_teardown_session_id)
+                    self._last_tool_list_hash.pop(_teardown_session_id, None)
+                except RuntimeError:
+                    pass
+            _old_obj_id = id(self._server_session)
+            self._session_ids.pop(_old_obj_id, None)
             self._server_session = None

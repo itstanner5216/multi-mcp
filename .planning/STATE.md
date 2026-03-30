@@ -2,31 +2,31 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
-status: Ready to plan
-stopped_at: "Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)"
-last_updated: "2026-03-29T18:48:31.086Z"
+current_phase: 08
+status: Executing Phase 08
+stopped_at: "Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing"
+last_updated: "2026-03-30T04:36:20.338Z"
 progress:
-  total_phases: 6
-  completed_phases: 3
-  total_plans: 17
-  completed_plans: 11
+  total_phases: 9
+  completed_phases: 4
+  total_plans: 20
+  completed_plans: 12
 ---
 
 # Project State
 
 ## Current Status
 
-- **Milestone:** Phase 3 — Turn-by-Turn Adaptive
-- **Current Phase:** 05
-- **Phase Status:** ✅ Complete — Phase 4 all 4 plans done, 970 tests passing
-- **Last Updated:** 2026-03-29
+- **Milestone:** Phase 7+ — Core Pipeline Wiring + Hardening
+- **Current Phase:** 09
+- **Phase Status:** Integration sync — all review fixes applied, k8s removed, IP policing removed
+- **Last Updated:** 2026-03-30
 
 ## Active Phase
 
-**Phase 4: Rollout Hardening — COMPLETE**
+**Phase 7: Core Pipeline Wiring — IN PROGRESS (1/1 plans complete)**
 
-Goal: Canary rollout infrastructure, offline replay evaluator, online metrics/alerting, operator runbook.
+Goal: Wire all scoring and retrieval paths end-to-end so the BMXF pipeline actually executes per the source plan.
 
 ## Phase Progress
 
@@ -38,11 +38,14 @@ Goal: Canary rollout infrastructure, offline replay evaluator, online metrics/al
 | 4 | Rollout Hardening | ✅ Complete (4/4 plans) |
 | 5 | Post-GA Learning | 📋 Planned (3 plans) |
 | 6 | Verification & Compliance | 📋 Planned (1 plan) |
+| 7 | Core Pipeline Wiring | ✅ Complete (1/1 plans) |
+| 8 | Turn-Boundary State & Tool Call Rewrite | ✅ Complete |
+| 9 | Replay Metrics & Rescore Monitoring | 🔄 In Progress |
 
 ## Session Continuity
 
-Last session: 2026-03-29T18:41:08Z
-Stopped at: Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RUNBOOK.md, 970 tests passing (Phase 4 complete)
+Last session: 2026-03-30T00:57:20.615Z
+Stopped at: Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing
 
 ## Context Notes
 
@@ -79,3 +82,10 @@ Stopped at: Completed 04-04-PLAN.md: RollingMetrics + AlertChecker + OPERATOR-RU
 | 2026-03-29 | FileRetrievalLogger.log_alert uses lazy import time as _time (04-03) | Avoids module-level name collision; consistent with existing patterns |
 | 2026-03-29 | AlertChecker takes MetricSnapshot not RollingMetrics (04-04) | Separates computation from alerting; enables unit testing without time.monotonic() |
 | 2026-03-29 | pct() uses min(int(p*n), n-1) index matching replay.py (04-04) | Consistent percentile calculation across offline replay and online RollingMetrics |
+| 2026-03-30 | top_k default 10→15 per source plan line 496 (07-01) | Matches synthesized plan canonical value |
+| 2026-03-30 | NAMESPACE_ALIASES uses exact server-name keys not substring fragments (07-01) | Source plan lines 584-597; 'gh' no longer matches 'github' |
+| 2026-03-30 | BMXFRetriever dual indexes: env (alpha=0.5) + nl (alpha=None) (07-01) | Source plan lines 287, 297; query_mode selects index |
+| 2026-03-30 | Routing dispatch uses ROUTING_TOOL_NAME not ROUTING_TOOL_KEY (07-01) | Model calls "request_tool" not "__routing__request_tool" |
+| 2026-03-30 | dynamic_k evidence-based not config.max_k heuristic (07-01) | Source plan line 292; 15 base, 18 polyglot, cap 20 |
+| 2026-03-30 | Tier 6 caps at 12 tools (not 30); anchor seeding replaced by fallback ladder (07-01) | Source plan line 898; anchor concept replaced by scoring-based active set |
+| 2026-03-30 | **TEMP** Default port changed 8085 → 8083 for Phase 8/9 test runs | User's always-on multi-mcp instance occupies 8085; conflicts with e2e test_sse_mode. **Revert to 8085 after Phase 9**: tests/e2e_test.py:38, main.py:17, src/multimcp/multi_mcp.py:34, start-server.sh |

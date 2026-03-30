@@ -38,6 +38,8 @@ python -m src.multimcp.retrieval.replay /path/to/ranking_events.jsonl
 **Required:** All cutover gates must pass:
 - p95 scorer latency < 50ms
 - Tier 5-6 rate < 5%
+- Recall@15 improvement ≥ 5% (canary vs control, N≥20 per group)
+- Describe-rate drop ≥ 20% relative (canary vs control, N≥20 per group)
 
 ### Step 2: Enable Canary at 10%
 

@@ -6,10 +6,8 @@ OBS-02: NullLogger.log_ranking_event(event) completes without error and writes n
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import tempfile
 
 import pytest
 

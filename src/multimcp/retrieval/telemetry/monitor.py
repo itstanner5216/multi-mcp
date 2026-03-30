@@ -9,8 +9,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, Optional
 
+from loguru import logger
+
 if TYPE_CHECKING:
-    from .scanner import RootScanner
+    from .scanner import TelemetryScanner
 
 # Adaptive polling schedule: idle polls back off through these intervals (seconds)
 _POLL_SCHEDULE = [5.0, 10.0, 20.0, 30.0]
@@ -35,7 +37,7 @@ class RootMonitor:
 
     def __init__(
         self,
-        scanner: Optional["RootScanner"] = None,
+        scanner: Optional["TelemetryScanner"] = None,
         significance_threshold: float = _SIGNIFICANCE_THRESHOLD,
         min_debounce_s: float = 10.0,
     ) -> None:
@@ -71,9 +73,10 @@ class RootMonitor:
             significance = 0.0
         else:
             try:
-                evidence = self._scanner.scan()
+                evidence = self._scanner.scan_roots()
                 significance = self._estimate_significance(evidence)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Scanner failed during poll: {}", str(exc))
                 significance = 0.0
 
         self.record_change(significance)
@@ -100,7 +103,8 @@ class RootMonitor:
     def check_for_changes(self) -> bool:
         """Return True if cumulative significance has met the threshold.
 
-        Respects debounce: won't return True again within min_debounce_s of last trigger.
+        Respects debounce: won't return True again within min_debounce_s of the
+        last time this method returned True (or last acknowledge).
         Does NOT reset state -- call acknowledge() to reset after handling.
         """
         if self._cumulative_significance < self._threshold:
@@ -110,6 +114,8 @@ class RootMonitor:
         if (now - self._last_trigger_time) < self._min_debounce_s:
             return False  # Still in debounce window
 
+        # Record emission time so repeated calls within debounce window return False
+        self._last_trigger_time = now
         return True
 
     def acknowledge(self) -> None:

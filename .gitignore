@@ -43,3 +43,4 @@ contextforplan/
 docs/plans/
 .worktrees/
 .claude/worktrees/
+src/multi_mcp.egg-info/

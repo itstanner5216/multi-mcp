@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
@@ -16,6 +17,7 @@ class RetrievalContext:
     query: str = ""
     tool_call_history: list[str] = field(default_factory=list)
     server_hint: Optional[str] = None
+    query_mode: Literal["env", "nl"] = "env"
 
 
 @dataclass
@@ -37,7 +39,7 @@ class RetrievalConfig:
     """
     # Existing fields — unchanged
     enabled: bool = False
-    top_k: int = 10
+    top_k: int = 15
     full_description_count: int = 3
     anchor_tools: list[str] = field(default_factory=list)
     # Phase 2 additions
@@ -127,7 +129,7 @@ class SessionRoutingState:
     active_tool_ids: list[str] = field(default_factory=list)
     router_enum_tool_ids: list[str] = field(default_factory=list)
     recent_router_describes: list[str] = field(default_factory=list)
-    recent_router_proxies: list[str] = field(default_factory=list)
+    recent_router_proxies: dict[str, list[int]] = field(default_factory=dict)
     last_rank_scores: dict[str, float] = field(default_factory=dict)
     consecutive_low_rank: dict[str, int] = field(default_factory=dict)
 
@@ -157,3 +159,4 @@ class RankingEvent:
     router_proxies: list[str] = field(default_factory=list)
     scorer_latency_ms: float = 0.0
     group: str = "control"                # "canary" | "control" — set by pipeline
+    timestamp: float = field(default_factory=time.time)  # Unix epoch at emission

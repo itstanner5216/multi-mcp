@@ -3,7 +3,7 @@ Tests for CC agent final-pass fixes.
 
 Covers:
 - mcp_client.py: pending_configs restored on failure, idle disconnect ordering,
-  close() clears clients, _filter_env str coercion, IPv6 link-local SSRF block
+  close() clears clients, _filter_env str coercion
 - utils/audit.py: _sanitize_arguments handles tuples/sets, close() guards _sink_id,
   _write_entry serialization fallback
 - utils/config.py: AuditConfig defaults
@@ -11,7 +11,6 @@ Covers:
 """
 
 import asyncio
-import ipaddress
 import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,7 +21,6 @@ from src.multimcp.mcp_client import (
     MCPClientManager,
     _filter_env,
     _validate_url,
-    _PRIVATE_RANGES,
 )
 from src.multimcp.utils.audit import AuditLogger, _sanitize_arguments
 from src.multimcp.utils.config import AuditConfig
@@ -183,33 +181,6 @@ class TestFilterEnvStrCoercion:
         result = _filter_env({"PATH": "/usr/bin", "MY_VAR": 42})
         assert "PATH" not in result
         assert result["MY_VAR"] == "42"
-
-
-# ---------------------------------------------------------------------------
-# mcp_client: IPv6 link-local SSRF block
-# ---------------------------------------------------------------------------
-
-class TestIPv6LinkLocalBlocked:
-    """_PRIVATE_RANGES must include fe80::/10 (IPv6 link-local)."""
-
-    def test_fe80_range_present(self):
-        fe80_net = ipaddress.ip_network("fe80::/10")
-        assert fe80_net in _PRIVATE_RANGES, "fe80::/10 must be in _PRIVATE_RANGES"
-
-    def test_fe80_address_is_in_range(self):
-        fe80_addr = ipaddress.ip_address("fe80::1")
-        fe80_net = ipaddress.ip_network("fe80::/10")
-        assert fe80_addr in fe80_net
-
-    @pytest.mark.asyncio
-    async def test_validate_url_rejects_fe80(self):
-        """URL resolving to fe80:: (IPv6 link-local) must be rejected."""
-        with patch("asyncio.get_running_loop") as mock_loop:
-            mock_loop.return_value.getaddrinfo = AsyncMock(
-                return_value=[(None, None, None, None, ("fe80::1", 0, 0, 0))]
-            )
-            with pytest.raises(ValueError, match="private|internal"):
-                await _validate_url("http://example.com/api")
 
 
 # ---------------------------------------------------------------------------

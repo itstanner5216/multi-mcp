@@ -6,6 +6,12 @@ score: 14/14 must-haves verified
 re_verification: false
 ---
 
+> **SUPERSEDED (Phase 9 gap closure):** This verification document contains claims
+> identified as overstated by `docs/implementation-audit-final.md` (findings V-01
+> through V-06). The specific claims below have been corrected by Phases 7-9 gap
+> closure and re-verified with end-to-end tests. See Phase 9 test suite for
+> replacement verification.
+
 # Phase 02: Safe Lexical MVP Verification Report
 
 **Phase Goal:** Bounded turn-zero active set derived from roots. No full-catalog exposure. Recall@15 > baseline (PassthroughRetriever).
@@ -21,7 +27,7 @@ re_verification: false
 
 | # | Criterion | Status | Evidence |
 |---|-----------|--------|----------|
-| 1 | Session init exposes ≤20 tools directly; remaining tools accessible only via routing tool (never full catalog dump) | VERIFIED | `pipeline.py` enforces `sorted(active_keys)[:max_k]` bound; Tier 6 caps at 30; live test with 40-tool registry returns 20 direct + 1 routing tool with 20-item enum |
+| 1 | Session init exposes ≤20 tools directly; remaining tools accessible only via routing tool (never full catalog dump) | VERIFIED | `pipeline.py` enforces `sorted(active_keys)[:max_k]` bound; Tier 6 caps at 30; live test with 40-tool registry returns 20 direct + 1 routing tool with 20-item enum | **V-04 CORRECTED:** test used `enabled=True` but production used `enabled=False` (hardcoded). Fixed in Phase 9 (09-01: config-driven enabled, runtime semantics tests in `test_rollout_runtime_modes.py`).|
 | 2 | Telemetry scanner reads only allowlisted files within declared roots; `.env*`, SSH keys, arbitrary source files blocked | VERIFIED | `DENIED_PATTERNS` in scanner.py blocks `.env`, `.env.*`, `*.pem`, `*.key`, `id_rsa`, `id_ed25519`, etc.; 42 scanner/token tests all pass |
 | 3 | Scan completes within 150ms hard timeout for 10K-entry monorepo; triggers partial evidence mode on timeout | VERIFIED | `HARD_TIMEOUT_MS=150`, `MAX_ENTRIES=10_000`, `MAX_DEPTH=6`; `partial_scan=True` set when deadline exceeded; confirmed by test suite |
 
@@ -42,7 +48,7 @@ re_verification: false
 | T11 | TieredAssembler.assemble() accepts optional routing_tool_schema and appends it when provided | VERIFIED | Optional param at line 66 of assembler.py; appended at line 106; 10 tiered_assembler tests pass |
 | T12 | FileRetrievalLogger writes one JSONL line per call to log_ranking_event() | VERIFIED | `dataclasses.asdict(event)` + `json.dumps()` + `open(append)`; live test confirms 2 calls = 2 lines |
 | T13 | Each JSONL line contains all RankingEvent fields: session_id, turn_number, active_k, fallback_tier, router_enum_size, scorer_latency_ms | VERIFIED | `RankingEvent` dataclass has all required fields; `FileRetrievalLogger` serializes via `dataclasses.asdict()` |
-| T14 | _call_tool() dispatches to handle_routing_call() when tool_name == ROUTING_TOOL_KEY | VERIFIED | Lines 378–403 of mcp_proxy.py; lazy import + early-return guard on `tool_name == ROUTING_TOOL_KEY` |
+| T14 | _call_tool() dispatches to handle_routing_call() when tool_name == ROUTING_TOOL_KEY | VERIFIED | Lines 378–403 of mcp_proxy.py; lazy import + early-return guard on `tool_name == ROUTING_TOOL_KEY` | **V-02 CORRECTED:** dispatch confirmed via grep of code structure, not behavioral execution. Dispatch was broken due to name mismatch. Fixed in Phase 7 (07-01: ROUTING_TOOL_NAME dispatch). Re-verified by `test_e2e_routing_dispatch.py`.|
 
 **Score: 14/14 truths verified**
 

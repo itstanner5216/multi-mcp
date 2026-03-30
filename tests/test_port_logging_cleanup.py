@@ -1,6 +1,6 @@
 """
 Tests for Task 2: Port + Logging Cleanup
-- Default port should be 8085
+- Default port should be 8083
 - Config loading should use logger instead of print()
 """
 
@@ -13,17 +13,17 @@ from src.multimcp.multi_mcp import MultiMCP, MCPSettings
 
 
 class TestDefaultPort:
-    """Test that default port is 8085."""
+    """Test that default port is 8083."""
 
-    def test_mcp_settings_default_port_is_8085(self):
-        """MCPSettings should default to port 8085."""
+    def test_mcp_settings_default_port_is_8083(self):
+        """MCPSettings should default to port 8083."""
         settings = MCPSettings()
-        assert settings.port == 8085
+        assert settings.port == 8083
 
-    def test_multi_mcp_uses_8085_by_default(self):
-        """MultiMCP should use port 8085 when not specified."""
+    def test_multi_mcp_uses_8083_by_default(self):
+        """MultiMCP should use port 8083 when not specified."""
         server = MultiMCP()
-        assert server.settings.port == 8085
+        assert server.settings.port == 8083
 
     def test_port_can_be_overridden(self):
         """Port can still be overridden via settings."""

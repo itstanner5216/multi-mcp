@@ -83,7 +83,7 @@ class TestAutoDetectTransport:
         with patch("src.multimcp.mcp_client.streamable_http_client", streamable_ctx) as mock_sh, \
              patch("src.multimcp.mcp_client.sse_client") as mock_sse, \
              patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-            await manager._discover_sse("srv", "http://example.com", server_config)
+            await manager._discover_http("srv", "http://example.com", server_config)
 
         # streamable_http_client was called (the context manager itself was entered)
         # We verify by checking sse_client was NOT called — only streamable HTTP path ran
@@ -102,14 +102,14 @@ class TestAutoDetectTransport:
                    side_effect=Exception("connection refused")), \
              patch("src.multimcp.mcp_client.sse_client", sse_ctx) as mock_sse_factory, \
              patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         # SSE fallback was invoked — result is an empty list (no tools)
         assert result == []
 
     @pytest.mark.asyncio
     async def test_connect_url_server_tries_streamable_first(self):
-        """_connect_url_server with server_config=None attempts Streamable HTTP."""
+        """_negotiate_http_transport with transport_type=None attempts Streamable HTTP."""
         manager = MCPClientManager()
 
         streamable_ctx, _, _ = _make_mock_streamable()
@@ -119,8 +119,8 @@ class TestAutoDetectTransport:
             with patch("src.multimcp.mcp_client.streamable_http_client", streamable_ctx), \
                  patch("src.multimcp.mcp_client.sse_client") as mock_sse, \
                  patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-                client = await manager._connect_url_server(
-                    "srv", "http://example.com", {}, server_stack, None
+                client = await manager._negotiate_http_transport(
+                    "srv", "http://example.com", server_stack, None
                 )
 
         # sse_client must NOT have been called — streamable HTTP succeeded
@@ -128,7 +128,7 @@ class TestAutoDetectTransport:
 
     @pytest.mark.asyncio
     async def test_connect_url_server_falls_back_to_sse(self):
-        """_connect_url_server falls back to SSE when Streamable HTTP fails."""
+        """_negotiate_http_transport falls back to SSE when Streamable HTTP fails."""
         manager = MCPClientManager()
 
         sse_ctx, _, _ = _make_mock_sse()
@@ -139,8 +139,8 @@ class TestAutoDetectTransport:
                        side_effect=Exception("refused")), \
                  patch("src.multimcp.mcp_client.sse_client", sse_ctx), \
                  patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-                client = await manager._connect_url_server(
-                    "srv", "http://example.com", {}, server_stack, None
+                client = await manager._negotiate_http_transport(
+                    "srv", "http://example.com", server_stack, None
                 )
 
         # The returned client should be the mock session
@@ -166,7 +166,7 @@ class TestExplicitTransportType:
         with patch("src.multimcp.mcp_client.streamable_http_client") as mock_sh, \
              patch("src.multimcp.mcp_client.sse_client", sse_ctx), \
              patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         mock_sh.assert_not_called()
         assert isinstance(result, list)
@@ -183,7 +183,7 @@ class TestExplicitTransportType:
         with patch("src.multimcp.mcp_client.streamable_http_client") as mock_sh, \
              patch("src.multimcp.mcp_client.sse_client", sse_ctx), \
              patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         mock_sh.assert_not_called()
         assert isinstance(result, list)
@@ -200,16 +200,15 @@ class TestExplicitTransportType:
         with patch("src.multimcp.mcp_client.streamable_http_client", streamable_ctx), \
              patch("src.multimcp.mcp_client.sse_client") as mock_sse, \
              patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         mock_sse.assert_not_called()
         assert isinstance(result, list)
 
     @pytest.mark.asyncio
     async def test_sse_type_in_connect_url_server_skips_streamable(self):
-        """type='sse' in _connect_url_server: streamable_http_client NOT called."""
+        """type='sse' in _negotiate_http_transport: streamable_http_client NOT called."""
         manager = MCPClientManager()
-        server_config = ServerConfig(command="node", type="sse")
 
         sse_ctx, _, _ = _make_mock_sse()
         mock_cls, mock_sess = _make_mock_client_session_cls()
@@ -218,8 +217,8 @@ class TestExplicitTransportType:
             with patch("src.multimcp.mcp_client.streamable_http_client") as mock_sh, \
                  patch("src.multimcp.mcp_client.sse_client", sse_ctx), \
                  patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-                client = await manager._connect_url_server(
-                    "srv", "http://example.com", {}, server_stack, server_config
+                client = await manager._negotiate_http_transport(
+                    "srv", "http://example.com", server_stack, "sse"
                 )
 
         mock_sh.assert_not_called()
@@ -227,7 +226,7 @@ class TestExplicitTransportType:
 
     @pytest.mark.asyncio
     async def test_none_transport_type_tries_streamable_first(self):
-        """server_config=None in _connect_url_server: streamable_http_client attempted."""
+        """transport_type=None in _negotiate_http_transport: streamable_http_client attempted."""
         manager = MCPClientManager()
 
         streamable_ctx, _, _ = _make_mock_streamable()
@@ -237,8 +236,8 @@ class TestExplicitTransportType:
             with patch("src.multimcp.mcp_client.streamable_http_client", streamable_ctx), \
                  patch("src.multimcp.mcp_client.sse_client") as mock_sse, \
                  patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-                client = await manager._connect_url_server(
-                    "srv", "http://example.com", {}, server_stack, None
+                client = await manager._negotiate_http_transport(
+                    "srv", "http://example.com", server_stack, None
                 )
 
         # SSE was NOT needed — streamable succeeded
@@ -253,7 +252,7 @@ class TestExplicitTransportType:
         with patch("src.multimcp.mcp_client.streamable_http_client",
                    side_effect=Exception("server unavailable")), \
              patch("src.multimcp.mcp_client.sse_client") as mock_sse:
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         # No SSE fallback for explicit streamablehttp type
         mock_sse.assert_not_called()
@@ -268,7 +267,7 @@ class TestExplicitTransportType:
         with patch("src.multimcp.mcp_client.streamable_http_client") as mock_sh, \
              patch("src.multimcp.mcp_client.sse_client",
                    side_effect=Exception("server unavailable")):
-            result = await manager._discover_sse("srv", "http://example.com", server_config)
+            result = await manager._discover_http("srv", "http://example.com", server_config)
 
         mock_sh.assert_not_called()
         assert result == []
@@ -279,11 +278,11 @@ class TestExplicitTransportType:
 # ---------------------------------------------------------------------------
 
 class TestWatchdogTransport:
-    """Tests that the watchdog reconnect uses _connect_url_server for URL servers."""
+    """Tests that the watchdog reconnect uses _negotiate_http_transport for URL servers."""
 
     @pytest.mark.asyncio
     async def test_watchdog_uses_connect_url_server_for_url_servers(self):
-        """When a URL always-on server disconnects, watchdog calls _connect_url_server."""
+        """When a URL always-on server disconnects, watchdog calls _negotiate_http_transport."""
         manager = MCPClientManager()
         manager.always_on_servers = {"url-srv"}
         # No entry in clients → triggers reconnect
@@ -294,10 +293,10 @@ class TestWatchdogTransport:
         mock_client = AsyncMock()
         mock_client.initialize = AsyncMock(return_value=MagicMock())
 
-        async def fake_connect(name, url, env, stack, server_config=None):
+        async def fake_connect(name, url, stack, transport_type=None):
             return mock_client
 
-        with patch.object(manager, "_connect_url_server", wraps=fake_connect) as mock_conn, \
+        with patch.object(manager, "_negotiate_http_transport", wraps=fake_connect) as mock_conn, \
              patch.object(manager, "start_always_on_watchdog",
                           wraps=manager.start_always_on_watchdog):
             # Manually drive one iteration of the watchdog body (skip the sleep loop)
@@ -307,13 +306,12 @@ class TestWatchdogTransport:
                     server_cfg = configs.get(name)
                     assert server_cfg is not None
                     url = server_cfg.get("url")
-                    env = server_cfg.get("env", {})
                     if url:
                         server_stack = AsyncExitStack()
                         await server_stack.__aenter__()
                         try:
-                            client = await manager._connect_url_server(
-                                name, url, env, server_stack
+                            client = await manager._negotiate_http_transport(
+                                name, url, server_stack
                             )
                             await client.initialize()
                             manager.clients[name] = client
@@ -337,7 +335,7 @@ class TestWatchdogTransport:
 
         configs = {"my-srv": {"url": "http://example.com", "env": {}}}
 
-        with patch.object(manager, "_connect_url_server") as mock_conn:
+        with patch.object(manager, "_negotiate_http_transport") as mock_conn:
             for name in list(manager.always_on_servers):
                 if name not in manager.clients:
                     # This block should NOT execute
@@ -346,28 +344,28 @@ class TestWatchdogTransport:
                     if url:
                         server_stack = AsyncExitStack()
                         await server_stack.__aenter__()
-                        await manager._connect_url_server(name, url, {}, server_stack)
+                        await manager._negotiate_http_transport(name, url, server_stack)
 
         mock_conn.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_watchdog_transport_consistent_with_direct_connect(self):
-        """_connect_url_server is used both in watchdog and lazy connect — same transport logic."""
+        """_negotiate_http_transport is used in both watchdog and lazy connect — same transport logic."""
         manager = MCPClientManager()
 
         sse_ctx, _, _ = _make_mock_sse()
         streamable_ctx, _, _ = _make_mock_streamable()
         mock_cls, mock_sess = _make_mock_client_session_cls()
 
-        # Both the watchdog path and the lazy-connect path call _connect_url_server,
+        # Both the watchdog path and the lazy-connect path call _negotiate_http_transport,
         # which itself respects transport_type. Verify the logic is identical by calling
-        # _connect_url_server directly and confirming streamable HTTP is tried first.
+        # _negotiate_http_transport directly and confirming streamable HTTP is tried first.
         async with AsyncExitStack() as stack:
             with patch("src.multimcp.mcp_client.streamable_http_client", streamable_ctx), \
                  patch("src.multimcp.mcp_client.sse_client") as mock_sse_fn, \
                  patch("src.multimcp.mcp_client.ClientSession", mock_cls):
-                client = await manager._connect_url_server(
-                    "srv", "http://example.com", {}, stack
+                client = await manager._negotiate_http_transport(
+                    "srv", "http://example.com", stack
                 )
 
         # Streamable HTTP was tried; SSE was not needed

@@ -82,41 +82,7 @@ class TestCommandValidation:
 # ---------------------------------------------------------------------------
 
 class TestUrlValidation:
-    """Tests for _validate_url() SSRF protection."""
-
-    @pytest.mark.asyncio
-    async def test_localhost_url_blocked(self):
-        """http://localhost must be rejected (resolves to 127.0.0.1)."""
-        # loop.getaddrinfo will return loopback for 'localhost'
-        with patch("asyncio.get_running_loop") as mock_loop:
-            mock_loop.return_value.getaddrinfo = AsyncMock(
-                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
-            )
-            with pytest.raises(ValueError):
-                await _validate_url("http://localhost/api")
-            mock_loop.return_value.getaddrinfo.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_127_0_0_1_blocked(self):
-        """Direct loopback IP must be rejected."""
-        with patch("asyncio.get_running_loop") as mock_loop:
-            mock_loop.return_value.getaddrinfo = AsyncMock(
-                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
-            )
-            with pytest.raises(ValueError):
-                await _validate_url("http://127.0.0.1/api")
-            mock_loop.return_value.getaddrinfo.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_private_ip_range_blocked(self):
-        """URLs that resolve to RFC-1918 private IPs must be rejected."""
-        with patch("asyncio.get_running_loop") as mock_loop:
-            mock_loop.return_value.getaddrinfo = AsyncMock(
-                return_value=[(None, None, None, None, ("192.168.1.1", 0))]
-            )
-            with pytest.raises(ValueError):
-                await _validate_url("http://internal.corp/api")
-            mock_loop.return_value.getaddrinfo.assert_awaited_once()
+    """Tests for _validate_url() scheme, hostname, and DNS validation."""
 
     @pytest.mark.asyncio
     async def test_non_http_scheme_blocked(self):
@@ -139,6 +105,28 @@ class TestUrlValidation:
             )
             # Should not raise
             await _validate_url("http://example.com/api")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_private_ip_127_accepted(self):
+        """127.0.0.1 must be accepted — private-IP blocking removed."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
+            # Should not raise
+            await _validate_url("http://127.0.0.1:9080/sse")
+            mock_loop.return_value.getaddrinfo.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_localhost_accepted(self):
+        """localhost must be accepted — private-IP blocking removed."""
+        with patch("asyncio.get_running_loop") as mock_loop:
+            mock_loop.return_value.getaddrinfo = AsyncMock(
+                return_value=[(None, None, None, None, ("127.0.0.1", 0))]
+            )
+            # Should not raise
+            await _validate_url("http://localhost:8080/mcp")
             mock_loop.return_value.getaddrinfo.assert_awaited_once()
 
 

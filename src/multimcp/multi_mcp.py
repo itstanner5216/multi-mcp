@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 
 from mcp.server.sse import SseServerTransport
 
-from src.multimcp.mcp_client import MCPClientManager
+from src.multimcp.mcp_client import MCPClientManager, _validate_url
 from src.multimcp.mcp_proxy import MCPProxyServer
 from src.multimcp.yaml_config import load_config, save_config, MultiMCPConfig, ServerConfig
 from src.multimcp.cache_manager import merge_discovered_tools, get_enabled_tools
@@ -31,7 +31,7 @@ class MCPSettings(BaseSettings):
     """Configuration settings for the MultiMCP server."""
 
     host: str = "127.0.0.1"
-    port: int = 8085
+    port: int = 8083
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     transport: Literal["stdio", "sse"] = "stdio"
     sse_server_debug: bool = False
@@ -49,6 +49,7 @@ class MultiMCP:
         configure_logging(level=self.settings.log_level)
         self.logger = get_logger("MultiMCP")
         self.proxy: Optional[MCPProxyServer] = None
+        self.bmxf_retriever = None
         self.client_manager = MCPClientManager()
         # Safe under asyncio single-threaded model: add/discard are synchronous,
         # done callbacks fire between event loop iterations — no concurrent mutation.
@@ -425,12 +426,53 @@ class MultiMCP:
             self.logger.info(f"\U0001f4dd Updated config with new servers at {yaml_path}")
         return config
 
+    def _build_config_from_json_file(self) -> MultiMCPConfig:
+        """Build MultiMCPConfig directly from self.settings.config (JSON file).
+
+        Used when --config is explicitly provided. Does NOT touch the user's YAML at
+        ~/.config/multi-mcp/servers.yaml. Servers are registered with their JSON-supplied
+        settings (always_on, idle_timeout_minutes) but without pre-discovered tool
+        metadata — tool discovery happens eagerly in run() after proxy creation.
+        """
+        config = MultiMCPConfig()
+        if not self.settings.config:
+            return config
+        json_data = self.load_mcp_config(path=self.settings.config) or {}
+        json_servers = self._extract_mcp_servers(json_data)
+        for name, srv in json_servers.items():
+            valid_fields = ServerConfig.model_fields.keys()
+            filtered = {k: v for k, v in srv.items() if k in valid_fields}
+            ignored = set(srv.keys()) - set(filtered.keys())
+            if ignored:
+                self.logger.warning(f"⚠️ '{name}': ignoring unknown config keys: {ignored}")
+            config.servers[name] = ServerConfig(**filtered)
+        # Apply idle timeouts and always_on settings.
+        # NOTE: Do NOT set tool_filters here — no tool discovery has been done yet.
+        # Leaving tool_filters unset (None) means _is_tool_allowed returns True (allow all).
+        for server_name, server_config in config.servers.items():
+            self.client_manager.idle_timeouts[server_name] = (
+                server_config.idle_timeout_minutes * 60
+            )
+            if server_config.always_on:
+                self.client_manager.always_on_servers.add(server_name)
+        self.logger.info(
+            f"📄 Using JSON config: {self.settings.config} "
+            f"({len(config.servers)} server(s): {', '.join(config.servers)})"
+        )
+        return config
+
     async def run(self):
         """Entry point to run the MultiMCP server: loads config, initializes clients, starts server."""
         self.logger.info(
             f"🚀 Starting MultiMCP with transport: {self.settings.transport}"
         )
-        yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
+        # When --config is explicitly provided, use ONLY those servers (do not merge the
+        # user's personal YAML at YAML_CONFIG_PATH which may contain hundreds of servers).
+        # This keeps test / CI runs isolated to the specified config file.
+        if self.settings.config:
+            yaml_config = self._build_config_from_json_file()
+        else:
+            yaml_config = await self._bootstrap_from_yaml(YAML_CONFIG_PATH)
         self._yaml_config = yaml_config  # Store for profile resolution
         self._yaml_config_cache = yaml_config  # available to toggle_tool for schema lookup
 
@@ -491,28 +533,76 @@ class MultiMCP:
             self.proxy = await MCPProxyServer.create(self.client_manager)
             self.client_manager._on_server_disconnected = self.proxy._on_server_disconnected
 
-            # Initialize retrieval pipeline — BMXFRetriever in shadow mode (WIRE-01).
-            # shadow_mode=True: scoring proceeds but all tools are still returned,
-            # preserving existing behaviour until metrics confirm improvement.
-            # enabled=False: pipeline gating also off (double-safe default).
+            # Initialize retrieval pipeline — Phase 7 live mode (WIRE-01).
+            # enabled=True + rollout_stage="ga": pipeline actively filters tool lists.
+            # shadow_mode=False: real filtering (not passthrough).
+            # TelemetryScanner: wired so workspace roots drive env-query signals.
             from src.multimcp.retrieval.pipeline import RetrievalPipeline
             from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
-            from src.multimcp.retrieval.logging import NullLogger
+            from src.multimcp.retrieval.logging import NullLogger, FileRetrievalLogger
             from src.multimcp.retrieval.session import SessionStateManager
             from src.multimcp.retrieval.models import RetrievalConfig
 
-            retrieval_config = RetrievalConfig(enabled=False, shadow_mode=True)
+            retrieval_config = RetrievalConfig(
+                enabled=True,
+                shadow_mode=False,
+                rollout_stage="ga",
+            )
             bmxf_retriever = BMXFRetriever(config=retrieval_config)
+            self.bmxf_retriever = bmxf_retriever
+
+            # Build the initial index from whatever tools are already registered.
+            # rebuild_catalog() is called again after always_on servers connect so
+            # the index stays in sync. Called here to populate _env_index / _nl_index.
+            if self.proxy.tool_to_server:
+                bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+
+            # Wire TelemetryScanner so workspace roots drive env-query tokens.
+            telemetry_scanner = None
+            try:
+                from src.multimcp.retrieval.telemetry.scanner import TelemetryScanner
+                telemetry_scanner = TelemetryScanner()
+            except Exception as _te:
+                self.logger.warning(f"⚠️ TelemetryScanner unavailable: {_te}")
+
+            # Issue D: wire FileRetrievalLogger instead of NullLogger
+            _log_path = Path("logs/retrieval_rankings.jsonl")
+            _log_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                retrieval_logger = FileRetrievalLogger(_log_path)
+            except Exception as _le:
+                self.logger.warning(f"⚠️ FileRetrievalLogger unavailable, using NullLogger: {_le}")
+                retrieval_logger = NullLogger()
+
             self.proxy.retrieval_pipeline = RetrievalPipeline(
                 retriever=bmxf_retriever,
                 session_manager=SessionStateManager(retrieval_config),
-                logger=NullLogger(),
+                logger=retrieval_logger,
                 config=retrieval_config,
                 tool_registry=self.proxy.tool_to_server,
+                telemetry_scanner=telemetry_scanner,
             )
 
             # Pre-populate tool list from YAML cache so tools are visible immediately
             self.proxy.load_tools_from_yaml(yaml_config)
+
+            # When --config is given, load_tools_from_yaml is a no-op (no cached tool
+            # metadata in the JSON file). Eagerly connect all servers now so their tools
+            # populate tool_to_server before we start serving requests.
+            if self.settings.config:
+                for server_name in list(yaml_config.servers.keys()):
+                    try:
+                        client = await self.client_manager.get_or_create_client(server_name)
+                        await self.proxy.initialize_single_client(server_name, client)
+                    except Exception as e:
+                        self.logger.warning(
+                            f"⚠️ Failed to connect '{server_name}' during JSON-config init: {e}"
+                        )
+                # Rebuild the retrieval index with the freshly discovered tools so the
+                # pipeline catalog is populated before the first tools/list request.
+                if self.proxy.tool_to_server:
+                    bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+                    self.proxy.retrieval_pipeline.rebuild_catalog(self.proxy.tool_to_server)
 
             # Register watchdog callback so proxy tool mappings are refreshed after reconnect
             async def _on_server_reconnected(server_name: str, client) -> None:
@@ -762,9 +852,21 @@ class MultiMCP:
                     {"error": "Missing required 'mcpServers' field"}, status_code=422
                 )
             # Add servers as pending (lazy connection on first tool call)
+            # Validate URLs for SSRF before accepting them (dynamic untrusted input).
+            # Static config servers (from --config or YAML) bypass this check since
+            # the user explicitly authored those URLs.
             servers = payload.get("mcpServers", {})
             added = []
             for name, config in servers.items():
+                url = config.get("url")
+                if url:
+                    try:
+                        await _validate_url(url)
+                    except ValueError as ssrf_err:
+                        self.logger.warning(
+                            f"⚠️ Rejected /mcp_servers POST — SSRF check failed for '{name}': {ssrf_err}"
+                        )
+                        return JSONResponse({"error": str(ssrf_err)}, status_code=403)
                 self.proxy.client_manager.add_pending_server(name, config)
                 added.append(name)
 
@@ -780,6 +882,9 @@ class MultiMCP:
                 )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
+                # Issue E: rebuild BMXF index after dynamic server add
+                if self.bmxf_retriever is not None and self.proxy.tool_to_server:
+                    self.bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
                 return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
             except ValueError as e:
                 # Security validation failure (command not allowed, SSRF attempt, etc.)
@@ -806,6 +911,9 @@ class MultiMCP:
 
             try:
                 await self.proxy.unregister_client(name)
+                # Issue E: rebuild BMXF index after dynamic server remove
+                if self.bmxf_retriever is not None and self.proxy.tool_to_server:
+                    self.bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
                 return JSONResponse(
                     {"message": f"Client '{name}' removed successfully"}
                 )

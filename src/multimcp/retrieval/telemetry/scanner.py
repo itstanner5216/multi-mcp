@@ -9,19 +9,20 @@ Safety invariants:
 from __future__ import annotations
 
 import fnmatch
+import functools
 import hashlib
-import os
 import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
+
+import anyio
 
 from .evidence import RootEvidence, WorkspaceEvidence, merge_evidence
 from .tokens import (
     build_tokens,
     MANIFEST_LANGUAGE_MAP,
     LOCKFILE_NAMES,
-    MAX_README_TOKENS,
 )
 
 # ── Allowlist ────────────────────────────────────────────────────────────────
@@ -135,52 +136,49 @@ def scan_root(
             return
 
         try:
-            entries = list(path.iterdir())
+            for entry in path.iterdir():
+                if time.monotonic() >= deadline:
+                    partial = True
+                    return
+                if entries_visited >= max_entries:
+                    partial = True
+                    return
+
+                entries_visited += 1
+                name = entry.name
+
+                # Skip symlinks to prevent escape from root
+                if entry.is_symlink():
+                    continue
+
+                # Skip denied files immediately
+                if _is_denied(name):
+                    continue
+
+                rel_path = str(entry.relative_to(root_path))
+
+                if entry.is_file():
+                    if name in ALL_ALLOWED_FILES:
+                        found_files.add(rel_path)
+                    elif README_PATTERN.match(name) and not readme_lines:
+                        # Read first 40 lines of README
+                        try:
+                            with open(entry, encoding="utf-8", errors="ignore") as f:
+                                readme_lines = [f.readline() for _ in range(40)]
+                        except OSError:
+                            pass
+
+                elif entry.is_dir():
+                    # Special: .github/workflows directory — add as CI signal
+                    if rel_path in {".github/workflows", ".github"} or name in {
+                        ".github", ".circleci", "migrations",
+                    }:
+                        found_files.add(rel_path)
+                    _walk(entry, depth + 1)
         except PermissionError:
             return
         except OSError:
             return
-
-        for entry in entries:
-            if time.monotonic() >= deadline:
-                partial = True
-                return
-            if entries_visited >= max_entries:
-                partial = True
-                return
-
-            entries_visited += 1
-            name = entry.name
-
-            # Skip symlinks to prevent escape from root
-            if entry.is_symlink():
-                continue
-
-            # Skip denied files immediately
-            if _is_denied(name):
-                continue
-
-            rel_path = str(entry.relative_to(root_path))
-
-            if entry.is_file():
-                if name in ALL_ALLOWED_FILES:
-                    found_files.add(rel_path)
-                elif README_PATTERN.match(name) and not readme_lines:
-                    # Read first 40 lines of README
-                    try:
-                        with open(entry, encoding="utf-8", errors="ignore") as f:
-                            readme_lines = [f.readline() for _ in range(40)]
-                    except OSError:
-                        pass
-
-            elif entry.is_dir():
-                # Special: .github/workflows directory — add as CI signal
-                if rel_path in {".github/workflows", ".github"} or name in {
-                    ".github", ".circleci", "migrations",
-                }:
-                    found_files.add(rel_path)
-                _walk(entry, depth + 1)
-
     _walk(root_path, depth=0)
 
     if partial:
@@ -234,7 +232,14 @@ class TelemetryScanner:
         Returns:
             WorkspaceEvidence with merged tokens from all roots.
         """
-        names = root_names or [None] * len(root_uris)
+        if root_names is None:
+            names = [None] * len(root_uris)
+        else:
+            if len(root_names) != len(root_uris):
+                raise ValueError(
+                    f"root_names length ({len(root_names)}) must match root_uris length ({len(root_uris)})"
+                )
+            names = root_names
         results: list[RootEvidence] = []
         for uri, name in zip(root_uris, names):
             evidence = scan_root(
@@ -246,6 +251,20 @@ class TelemetryScanner:
             )
             results.append(evidence)
         return merge_evidence(results)
+
+    async def async_scan_roots(
+        self,
+        root_uris: list[str],
+        root_names: Optional[list[Optional[str]]] = None,
+    ) -> WorkspaceEvidence:
+        """Async wrapper that offloads blocking scan to a worker thread.
+
+        Use this from async code paths (e.g., session init, roots updates)
+        to avoid blocking the event loop with filesystem I/O.
+        """
+        return await anyio.to_thread.run_sync(
+            functools.partial(self.scan_roots, root_uris, root_names)
+        )
 
 
 def scan_roots(
