@@ -477,13 +477,21 @@ class MCPProxyServer(server.Server):
                 proxy_result = await self._call_tool(proxy_req)
                 # Record router proxy accounting (CF-2) — single write path
                 if self.retrieval_pipeline is not None:
+                    _sid: Optional[str] = None
                     try:
                         _sid = self._get_session_id()
                         await self.retrieval_pipeline.on_tool_called(
                             _sid, actual_tool_name, call_args, is_router_proxy=True
                         )
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger = get_logger(__name__).bind(
+                            tool_name=actual_tool_name,
+                            session_id=_sid,
+                        )
+                        logger.warning(
+                            "Failed to record router proxy tool call in retrieval pipeline",
+                            error=str(exc),
+                        )
                 return proxy_result
             # Record describe targets to pipeline session state so
             # get_session_router_describes() has real data for conversation context.
