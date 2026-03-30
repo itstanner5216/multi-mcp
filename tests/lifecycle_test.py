@@ -5,7 +5,7 @@ import json
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from tests.utils import run_e2e_test_with_client
 
-MCP_SERVER_URL = "http://127.0.0.1:8085"
+MCP_SERVER_URL = "http://127.0.0.1:8083"
 HEADERS = {"Content-Type": "application/json"}
 EXPECTED_TOOLS=["convert_temperature","convert_length", "calculator__add", "calculator__multiply"]
 TEST_PROMPTS=[
@@ -84,7 +84,7 @@ async def test_mcp_servers_lifecycle():
         client = MultiServerMCPClient({
             "multi-mcp": {
                 "transport": "sse",
-                "url": "http://127.0.0.1:8085/sse",
+                "url": "http://127.0.0.1:8083/sse",
             }
         })
         # Validate that the proxy discovers tools and that expected test tools are present
