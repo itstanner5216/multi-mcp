@@ -3,6 +3,9 @@
 Covers the separation of direct tool calls, router describes, and router proxy
 calls into distinct tracking buckets, and validates that RankingEvent fields
 reflect only their respective signal sources.
+
+Also covers runtime truth: MCPProxyServer._call_tool() proxy dispatch path
+writes is_router_proxy=True to the pipeline and NOT to direct_tool_calls.
 """
 
 from __future__ import annotations
@@ -17,7 +20,7 @@ from src.multimcp.retrieval.pipeline import RetrievalPipeline
 from src.multimcp.retrieval.models import RetrievalConfig
 from src.multimcp.retrieval.session import SessionStateManager
 from src.multimcp.retrieval.logging import RetrievalLogger
-from src.multimcp.mcp_proxy import ToolMapping
+from src.multimcp.mcp_proxy import MCPProxyServer, ToolMapping
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -176,3 +179,153 @@ async def test_tier5_fields_correct_separation():
     assert "server__05_tool" not in event.router_proxies
     assert "server__00_tool" not in event.router_proxies
     assert "server__01_tool" not in event.router_proxies
+
+
+# ── Runtime truth: MCPProxyServer._call_tool() proxy dispatch ────────────────
+
+
+def _make_proxy_with_pipeline(tool_registry: dict) -> tuple[MCPProxyServer, MagicMock]:
+    """Create an MCPProxyServer wired with a mock pipeline, returning (proxy, pipeline)."""
+    client_manager = MagicMock()
+    client_manager.clients = {}
+    proxy = MCPProxyServer(client_manager)
+    proxy.tool_to_server.update(tool_registry)
+
+    # Attach a mock session so _get_session_id() works
+    session = MagicMock()
+    proxy._server_session = session
+
+    pipeline = MagicMock()
+    pipeline.on_tool_called = AsyncMock(return_value=False)
+    pipeline.record_router_describe = MagicMock()
+    proxy.retrieval_pipeline = pipeline
+
+    # Silence audit logger and trigger manager
+    proxy._send_tools_list_changed = AsyncMock()
+    proxy.trigger_manager = MagicMock()
+    proxy.trigger_manager.check_and_enable = AsyncMock(return_value=[])
+
+    return proxy, pipeline
+
+
+def _make_tool_registry_for_proxy() -> dict:
+    """Registry with two real-ish tools for proxy dispatch testing."""
+    registry = {}
+    for key in ("server__target_tool", "server__other_tool"):
+        server_name, tool_name = key.split("__", 1)
+        mock_client = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.content = [types.TextContent(type="text", text="ok")]
+        mock_result.isError = False
+        mock_client.call_tool = AsyncMock(return_value=mock_result)
+        registry[key] = ToolMapping(
+            server_name=server_name,
+            client=mock_client,
+            tool=types.Tool(
+                name=key,
+                description="Test tool",
+                inputSchema={"type": "object", "properties": {}},
+            ),
+        )
+    return registry
+
+
+@pytest.mark.anyio
+async def test_proxy_routing_call_recorded_as_router_proxy():
+    """MCPProxyServer._call_tool() routing proxy path calls on_tool_called with is_router_proxy=True.
+
+    Runtime truth: when the routing tool returns __PROXY_CALL__:{name},
+    the pipeline must record it in router_proxies (is_router_proxy=True).
+    """
+    registry = _make_tool_registry_for_proxy()
+    proxy, pipeline = _make_proxy_with_pipeline(registry)
+
+    # Patch handle_routing_call at its source module so the local import picks it up
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(
+            "src.multimcp.retrieval.routing_tool.handle_routing_call",
+            lambda name, describe, arguments, tool_to_server: [
+                types.TextContent(type="text", text="__PROXY_CALL__:server__target_tool")
+            ],
+        )
+
+        req = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(
+                name="request_tool",
+                arguments={"name": "server__target_tool", "describe": False, "arguments": {}},
+            ),
+        )
+        await proxy._call_tool(req)
+
+    # on_tool_called must have been called with is_router_proxy=True
+    pipeline.on_tool_called.assert_called_once()
+    call_kwargs = pipeline.on_tool_called.call_args
+    # Third positional arg is the tool name; keyword arg is_router_proxy must be True
+    assert call_kwargs.kwargs.get("is_router_proxy") is True or (
+        len(call_kwargs.args) >= 4 and call_kwargs.args[3] is True
+    ), f"Expected is_router_proxy=True, got: {call_kwargs}"
+
+
+@pytest.mark.anyio
+async def test_proxy_routing_call_not_recorded_as_direct():
+    """MCPProxyServer._call_tool() routing proxy path does NOT call on_tool_called a second time
+    for the outer routing tool call — only one on_tool_called invocation, for the proxied tool.
+
+    Ensures the routing tool call itself is not double-counted as a direct call.
+    """
+    registry = _make_tool_registry_for_proxy()
+    proxy, pipeline = _make_proxy_with_pipeline(registry)
+
+    with pytest.MonkeyPatch().context() as mp:
+        mp.setattr(
+            "src.multimcp.retrieval.routing_tool.handle_routing_call",
+            lambda name, describe, arguments, tool_to_server: [
+                types.TextContent(type="text", text="__PROXY_CALL__:server__target_tool")
+            ],
+        )
+
+        req = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(
+                name="request_tool",
+                arguments={"name": "server__target_tool", "describe": False, "arguments": {}},
+            ),
+        )
+        await proxy._call_tool(req)
+
+    # Exactly one on_tool_called call — not two (one proxy + one direct)
+    assert pipeline.on_tool_called.call_count == 1, (
+        f"Expected 1 on_tool_called call (proxy only), got {pipeline.on_tool_called.call_count}"
+    )
+    # That single call was the proxied tool, not 'request_tool'
+    called_tool = pipeline.on_tool_called.call_args.args[1]
+    assert called_tool == "server__target_tool"
+    assert called_tool != "request_tool"
+
+
+@pytest.mark.anyio
+async def test_direct_call_recorded_without_is_router_proxy():
+    """MCPProxyServer._call_tool() direct tool path calls on_tool_called with is_router_proxy=False (default).
+
+    Direct calls must NOT appear in router_proxies accounting.
+    """
+    registry = _make_tool_registry_for_proxy()
+    proxy, pipeline = _make_proxy_with_pipeline(registry)
+
+    req = types.CallToolRequest(
+        method="tools/call",
+        params=types.CallToolRequestParams(
+            name="server__other_tool",
+            arguments={},
+        ),
+    )
+    await proxy._call_tool(req)
+
+    pipeline.on_tool_called.assert_called_once()
+    call_args = pipeline.on_tool_called.call_args
+    # is_router_proxy should default to False (keyword arg absent or explicitly False)
+    is_proxy = call_args.kwargs.get("is_router_proxy", False)
+    if len(call_args.args) >= 4:
+        is_proxy = call_args.args[3]
+    assert is_proxy is False, f"Direct call must not set is_router_proxy=True; got {call_args}"
