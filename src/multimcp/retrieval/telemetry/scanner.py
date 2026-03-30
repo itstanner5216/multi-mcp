@@ -234,7 +234,14 @@ class TelemetryScanner:
         Returns:
             WorkspaceEvidence with merged tokens from all roots.
         """
-        names = root_names or [None] * len(root_uris)
+        if root_names is None:
+            names = [None] * len(root_uris)
+        else:
+            if len(root_names) != len(root_uris):
+                raise ValueError(
+                    f"root_names length ({len(root_names)}) must match root_uris length ({len(root_uris)})"
+                )
+            names = root_names
         results: list[RootEvidence] = []
         for uri, name in zip(root_uris, names):
             evidence = scan_root(
