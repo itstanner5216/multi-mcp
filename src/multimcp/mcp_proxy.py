@@ -418,10 +418,8 @@ class MCPProxyServer(server.Server):
             tools = await self.retrieval_pipeline.get_tools_for_list(
                 session_id, conversation_context
             )
-            # Emit tools/list_changed only when the tool list changes
+            # Track the current tool list hash, but do not emit tools/list_changed from here.
             new_hash = _hash_tool_list(tools)
-            if session_id in self._last_tool_list_hash and new_hash != self._last_tool_list_hash[session_id]:
-                await self._send_tools_list_changed()
             self._last_tool_list_hash[session_id] = new_hash
             return types.ServerResult(tools=tools)
         all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
