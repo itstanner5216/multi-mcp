@@ -163,10 +163,13 @@ async def test_tier5_fields_correct_separation():
     await pipeline.get_tools_for_list(sid)
     event = pipeline.logger.log_ranking_event.call_args[0][0]
 
-    # direct_tool_calls contains only direct calls (not describe or proxy)
-    # (Note: on_tool_called always writes to _session_tool_history regardless of is_router_proxy)
+    # direct_tool_calls contains ONLY direct calls — NOT proxy or describe
     assert "server__00_tool" in event.direct_tool_calls
     assert "server__01_tool" in event.direct_tool_calls
+    # KEY: proxy call must NOT appear in direct_tool_calls (this was the bug)
+    assert "server__06_tool" not in event.direct_tool_calls
+    assert "server__04_tool" not in event.direct_tool_calls
+    assert "server__05_tool" not in event.direct_tool_calls
 
     # router_describes contains only describe calls
     assert "server__04_tool" in event.router_describes
@@ -179,6 +182,128 @@ async def test_tier5_fields_correct_separation():
     assert "server__05_tool" not in event.router_proxies
     assert "server__00_tool" not in event.router_proxies
     assert "server__01_tool" not in event.router_proxies
+
+
+@pytest.mark.anyio
+async def test_proxy_call_not_in_direct_tool_calls():
+    """Proxy calls must NOT appear in RankingEvent.direct_tool_calls.
+
+    This is the primary semantic guarantee: direct_tool_calls is a ledger of
+    true direct tool invocations only. Proxy calls go to router_proxies only.
+    """
+    pipeline = make_pipeline()
+    sid = "no_proxy_in_direct"
+
+    # Turn 1
+    await pipeline.get_tools_for_list(sid)
+
+    # Proxy call only
+    await pipeline.on_tool_called(sid, "server__03_tool", {}, is_router_proxy=True)
+
+    # Turn 2 — emit RankingEvent
+    await pipeline.get_tools_for_list(sid)
+    event = pipeline.logger.log_ranking_event.call_args[0][0]
+
+    # Proxy call must be in router_proxies
+    assert "server__03_tool" in event.router_proxies
+
+    # Proxy call must NOT be in direct_tool_calls
+    assert "server__03_tool" not in event.direct_tool_calls, (
+        "Proxy call appeared in direct_tool_calls — double-counting bug still present"
+    )
+
+    # direct_tool_calls must be empty (no direct calls were made)
+    assert event.direct_tool_calls == [], (
+        f"Expected empty direct_tool_calls, got: {event.direct_tool_calls}"
+    )
+
+
+@pytest.mark.anyio
+async def test_direct_call_not_in_router_proxies():
+    """Direct calls must NOT appear in RankingEvent.router_proxies."""
+    pipeline = make_pipeline()
+    sid = "no_direct_in_proxy"
+
+    # Turn 1
+    await pipeline.get_tools_for_list(sid)
+
+    # Direct call only
+    await pipeline.on_tool_called(sid, "server__01_tool", {}, is_router_proxy=False)
+
+    # Turn 2 — emit RankingEvent
+    await pipeline.get_tools_for_list(sid)
+    event = pipeline.logger.log_ranking_event.call_args[0][0]
+
+    # Direct call in direct_tool_calls
+    assert "server__01_tool" in event.direct_tool_calls
+
+    # Direct call NOT in router_proxies
+    assert "server__01_tool" not in event.router_proxies
+
+    # router_proxies empty
+    assert event.router_proxies == []
+
+
+@pytest.mark.anyio
+async def test_describe_call_not_in_direct_or_proxy():
+    """Describe-only targets must NOT appear in direct_tool_calls or router_proxies."""
+    pipeline = make_pipeline()
+    sid = "describe_separation"
+
+    # Turn 1
+    await pipeline.get_tools_for_list(sid)
+
+    # Describe-only call
+    pipeline.record_router_describe(sid, "server__07_tool")
+
+    # Turn 2 — emit RankingEvent
+    await pipeline.get_tools_for_list(sid)
+    event = pipeline.logger.log_ranking_event.call_args[0][0]
+
+    # Describe target in router_describes
+    assert "server__07_tool" in event.router_describes
+
+    # NOT in direct_tool_calls
+    assert "server__07_tool" not in event.direct_tool_calls
+
+    # NOT in router_proxies
+    assert "server__07_tool" not in event.router_proxies
+
+
+@pytest.mark.anyio
+async def test_no_double_counting_proxy_in_tier5_fields():
+    """Tier 5 / replay safety: proxied usage must NOT be double-counted.
+
+    A proxied tool must appear ONLY in router_proxies, not also in direct_tool_calls.
+    This ensures the Tier 5 frequency prior and replay metrics see correct counts.
+    """
+    pipeline = make_pipeline()
+    sid = "no_double_count"
+
+    # Turn 1
+    await pipeline.get_tools_for_list(sid)
+
+    # Make one direct call and one proxy call to same tool to stress the separation
+    await pipeline.on_tool_called(sid, "server__02_tool", {}, is_router_proxy=False)  # direct
+    await pipeline.on_tool_called(sid, "server__02_tool", {}, is_router_proxy=True)   # proxy
+
+    # Turn 2 — emit RankingEvent
+    await pipeline.get_tools_for_list(sid)
+    event = pipeline.logger.log_ranking_event.call_args[0][0]
+
+    # server__02_tool appears exactly once in direct_tool_calls (the direct invocation)
+    direct_count = event.direct_tool_calls.count("server__02_tool")
+    assert direct_count == 1, (
+        f"Expected 1 occurrence in direct_tool_calls, got {direct_count}. "
+        f"direct_tool_calls={event.direct_tool_calls}"
+    )
+
+    # server__02_tool appears exactly once in router_proxies (the proxy invocation)
+    proxy_count = event.router_proxies.count("server__02_tool")
+    assert proxy_count == 1, (
+        f"Expected 1 occurrence in router_proxies, got {proxy_count}. "
+        f"router_proxies={event.router_proxies}"
+    )
 
 
 # ── Runtime truth: MCPProxyServer._call_tool() proxy dispatch ────────────────

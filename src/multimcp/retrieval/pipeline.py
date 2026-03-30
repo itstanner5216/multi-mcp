@@ -177,6 +177,10 @@ class RetrievalPipeline:
         self._session_router_describes: dict[str, list[str]] = {}
         # CF-2: Separate router proxy accounting (on_tool_called is_router_proxy=True path only)
         self._session_router_proxies: dict[str, list[str]] = {}
+        # Direct-call ledger: receives ONLY true direct calls (is_router_proxy=False).
+        # Kept separate from _session_tool_history (conversation context) so that
+        # RankingEvent.direct_tool_calls is semantically honest — no proxy calls contaminate it.
+        self._direct_tool_calls: dict[str, list[str]] = {}
         # CF-3: Turn-scoped usage buckets for demotion protection
         self._current_turn_used: dict[str, set[str]] = {}
         self._just_finished_turn_used: dict[str, set[str]] = {}
@@ -729,7 +733,9 @@ class RetrievalPipeline:
         latency_ms = (time.monotonic() - t0) * 1000.0
 
         # Step 12: Build RankingEvent with correct signal sources (CF-2)
-        session_direct_calls = list(self._session_tool_history.get(session_id, []))
+        # Source direct_tool_calls from the direct-only ledger (_direct_tool_calls),
+        # NOT from _session_tool_history (which includes proxy calls for conv context).
+        session_direct_calls = list(self._direct_tool_calls.get(session_id, []))
         session_router_describes = list(self._session_router_describes.get(session_id, []))
         session_router_proxies = list(self._session_router_proxies.get(session_id, []))
 
@@ -843,6 +849,12 @@ class RetrievalPipeline:
         arg_keys = self._session_arg_keys.setdefault(session_id, [])
         arg_keys.extend(arguments.keys())
 
+        # Direct-call ledger: only true direct calls (not proxy calls) enter here.
+        # This is the sole source for RankingEvent.direct_tool_calls so the field
+        # is semantically honest — proxied tools do NOT contaminate it.
+        if not is_router_proxy:
+            self._direct_tool_calls.setdefault(session_id, []).append(tool_name)
+
         # CF-2: If this is a routing-tool proxy call, write all proxy accounting
         if is_router_proxy:
             # Flat session list for RankingEvent.router_proxies
@@ -884,6 +896,7 @@ class RetrievalPipeline:
         self._session_arg_keys.pop(session_id, None)
         self._session_router_describes.pop(session_id, None)
         self._session_router_proxies.pop(session_id, None)
+        self._direct_tool_calls.pop(session_id, None)
         self._current_turn_used.pop(session_id, None)
         self._just_finished_turn_used.pop(session_id, None)
         self._routing_states.pop(session_id, None)
