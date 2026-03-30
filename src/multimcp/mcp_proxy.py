@@ -1,5 +1,7 @@
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
+import hashlib
+import uuid
 from mcp import server, types
 from mcp.client.session import ClientSession
 from mcp.server.session import ServerSession
@@ -13,6 +15,12 @@ from dataclasses import dataclass
 
 if TYPE_CHECKING:
     from src.multimcp.retrieval.pipeline import RetrievalPipeline
+
+
+def _hash_tool_list(tools: list) -> str:
+    """Stable hash of a tool list for change detection."""
+    names = sorted(t.name for t in tools)
+    return hashlib.sha256(",".join(names).encode()).hexdigest()[:16]
 
 
 @dataclass
@@ -55,6 +63,10 @@ class MCPProxyServer(server.Server):
         self.audit_logger = AuditLogger()
         # Store active server session for sending notifications
         self._server_session: Optional[ServerSession] = None
+        # Stable per-session UUIDs keyed by object id of ServerSession (CF-1)
+        self._session_ids: dict[int, str] = {}
+        # Per-session hash of last emitted tool list for change detection
+        self._last_tool_list_hash: dict[str, str] = {}
         # Initialize trigger manager
         self.trigger_manager = MCPTriggerManager(client_manager)
         # Optional retrieval pipeline (None = passthrough, all tools returned)
@@ -346,14 +358,19 @@ class MCPProxyServer(server.Server):
 
     ## Tools capabilities
     def _get_session_id(self) -> str:
-        """Return the current session identifier.
+        """Derive a stable per-session UUID from the current MCP server session.
 
-        Uses the active server session object id as the session key.
-        Falls back to "default" when no server session is active.
+        Raises RuntimeError if called with no active session. The proxy
+        must never call retrieval pipeline methods without a real session.
         """
-        if self._server_session is not None:
-            return str(id(self._server_session))
-        return "default"
+        if self._server_session is None:
+            raise RuntimeError(
+                "No active MCP session; retrieval pipeline must not be called without a session"
+            )
+        obj_id = id(self._server_session)
+        if obj_id not in self._session_ids:
+            self._session_ids[obj_id] = uuid.uuid4().hex
+        return self._session_ids[obj_id]
 
     async def _request_and_set_roots(self, session_id: str) -> None:
         """Request roots/list from the client and pass URIs to the retrieval pipeline.
@@ -401,6 +418,11 @@ class MCPProxyServer(server.Server):
             tools = await self.retrieval_pipeline.get_tools_for_list(
                 session_id, conversation_context
             )
+            # Emit tools/list_changed only when the tool list changes
+            new_hash = _hash_tool_list(tools)
+            if session_id in self._last_tool_list_hash and new_hash != self._last_tool_list_hash[session_id]:
+                await self._send_tools_list_changed()
+            self._last_tool_list_hash[session_id] = new_hash
             return types.ServerResult(tools=tools)
         all_tools = [mapping.tool for mapping in self.tool_to_server.values()]
         return types.ServerResult(tools=all_tools)
@@ -452,7 +474,22 @@ class MCPProxyServer(server.Server):
                         name=actual_tool_name, arguments=call_args
                     ),
                 )
-                return await self._call_tool(proxy_req)
+                proxy_result = await self._call_tool(proxy_req)
+                # Record router proxy accounting (CF-2) — single write path
+                if self.retrieval_pipeline is not None:
+                    try:
+                        _sid = self._get_session_id()
+                        await self.retrieval_pipeline.on_tool_called(
+                            _sid, actual_tool_name, call_args, is_router_proxy=True
+                        )
+                    except Exception:
+                        pass
+                return proxy_result
+            # Record describe targets to pipeline session state so
+            # get_session_router_describes() has real data for conversation context.
+            if describe and name and self.retrieval_pipeline is not None:
+                session_id = self._get_session_id()
+                self.retrieval_pipeline.record_router_describe(session_id, name)
             return types.ServerResult(content=content)
 
         # Check for keyword triggers and auto-enable matching servers
@@ -524,14 +561,13 @@ class MCPProxyServer(server.Server):
                 # Success: reset circuit breaker for this tool
                 getattr(self, '_tool_failure_counts', {}).pop(tool_name, None)
 
-                # Notify retrieval pipeline of tool usage (progressive disclosure)
+                # Notify retrieval pipeline of tool usage (turn-boundary based)
                 if self.retrieval_pipeline is not None:
                     try:
-                        disclosed = await self.retrieval_pipeline.on_tool_called(
-                            "default", tool_name, arguments
+                        _session_id = self._get_session_id()
+                        await self.retrieval_pipeline.on_tool_called(
+                            _session_id, tool_name, arguments
                         )
-                        if disclosed:
-                            await self._send_tools_list_changed()
                     except Exception as e:
                         self.logger.warning(f"⚠️ Retrieval pipeline error on tool call: {e}")
 
@@ -909,4 +945,13 @@ class MCPProxyServer(server.Server):
                     )
 
             # Clear session when done
+            if self.retrieval_pipeline is not None and hasattr(self.retrieval_pipeline, "cleanup_session"):
+                try:
+                    _teardown_session_id = self._get_session_id()
+                    self.retrieval_pipeline.cleanup_session(_teardown_session_id)
+                    self._last_tool_list_hash.pop(_teardown_session_id, None)
+                except RuntimeError:
+                    pass
+            _old_obj_id = id(self._server_session)
+            self._session_ids.pop(_old_obj_id, None)
             self._server_session = None
