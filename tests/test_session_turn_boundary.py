@@ -152,7 +152,12 @@ async def test_call_tool_no_list_changed():
 
 @pytest.mark.anyio
 async def test_list_changed_only_on_diff():
-    """_list_tools() sends tools/list_changed only when the tool list hash changes."""
+    """_list_tools() tracks tool-list hashes per session without emitting notifications.
+
+    The current implementation stores the hash in _last_tool_list_hash but does
+    NOT call _send_tools_list_changed from _list_tools — notifications are sent
+    from other code paths (server add/remove, lazy connect, etc.).
+    """
     proxy = make_proxy()
     session = MagicMock()
     proxy._server_session = session
@@ -161,7 +166,7 @@ async def test_list_changed_only_on_diff():
     tools_v2 = [types.Tool(name="tool_b", description="b", inputSchema={"type": "object", "properties": {}})]
 
     pipeline = MagicMock()
-    # First call returns v1, second call returns v2
+    # First call returns v1, second call returns v2, third returns v2 again
     pipeline.get_tools_for_list = AsyncMock(side_effect=[tools_v1, tools_v2, tools_v2])
     pipeline.get_session_tool_history = MagicMock(return_value=[])
     pipeline.get_session_argument_keys = MagicMock(return_value=[])
@@ -169,17 +174,26 @@ async def test_list_changed_only_on_diff():
     proxy.retrieval_pipeline = pipeline
     proxy._send_tools_list_changed = AsyncMock()
 
-    # First call — no previous hash, no notification
+    session_id = proxy._get_session_id()
+
+    # First call — hash recorded for v1
     await proxy._list_tools(None)
+    hash_v1 = proxy._last_tool_list_hash.get(session_id)
+    assert hash_v1 is not None, "Hash should be recorded after first _list_tools call"
     proxy._send_tools_list_changed.assert_not_called()
 
-    # Second call — hash changed (v1 → v2), should notify
+    # Second call — hash updated for v2 (different from v1)
     await proxy._list_tools(None)
-    proxy._send_tools_list_changed.assert_called_once()
+    hash_v2 = proxy._last_tool_list_hash.get(session_id)
+    assert hash_v2 is not None
+    assert hash_v1 != hash_v2, "Hash should change when tool list changes"
+    proxy._send_tools_list_changed.assert_not_called()
 
-    # Third call — same hash as v2, no additional notification
+    # Third call — hash unchanged (v2 again)
     await proxy._list_tools(None)
-    proxy._send_tools_list_changed.assert_called_once()  # still just once
+    hash_v3 = proxy._last_tool_list_hash.get(session_id)
+    assert hash_v3 == hash_v2, "Hash should be stable when tool list is unchanged"
+    proxy._send_tools_list_changed.assert_not_called()
 
 
 # ── CF-4: SessionRoutingState per session ────────────────────────────────

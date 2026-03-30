@@ -73,6 +73,9 @@ behavior that is now verified.
 
 **Corrected status:** `ALERT_RESCORE_RATE = 0.2` was defined but never passed to `AlertChecker.__init__()` and never checked in `AlertChecker.check()`. The threshold constant existed but was inert. Phase 9 (09-01) adds `rescore_rate_10m` to `MetricSnapshot`, wires `record_rescore()` in `_do_rebuild()`, and adds `rescore_rate_10m > 0.2` check in `AlertChecker.check()`.
 
-**Replacement test:** `tests/test_e2e_alert_rescore.py::test_rebuild_triggers_record_rescore`
+**Replacement tests:**
+- `tests/test_alert_rescore_rate.py` — unit-level rescore rate threshold and metric snapshot validation
+- `tests/test_e2e_alert_rescore.py::test_rebuild_triggers_record_rescore` — end-to-end rebuild→alert path
+- `tests/test_replay_cutover_gates.py` — replay cutover gate checks with rescore rate guard
 
 **Runtime behavior verified:** Multiple catalog rebuilds produce `rescore_rate_10m > 0.2` which triggers the `HIGH_RESCORE_RATE` alert from `AlertChecker.check()`.
