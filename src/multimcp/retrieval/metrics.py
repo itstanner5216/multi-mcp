@@ -66,16 +66,19 @@ class RollingMetrics:
         """
         now = time.monotonic()
         self._rescore_times.append(now)
-        # Evict rescore timestamps outside the 30-minute window
-        cutoff = now - self._window
-        while self._rescore_times and self._rescore_times[0] < cutoff:
-            self._rescore_times.popleft()
+        # Evict rescore timestamps outside the rolling window.
+        self._evict_rescore(now)
 
     def _evict(self, now: float) -> None:
         cutoff = now - self._window
         while self._events and self._events[0][0] < cutoff:
             self._events.popleft()
 
+    def _evict_rescore(self, now: float) -> None:
+        """Evict rescore timestamps older than the rolling window."""
+        cutoff = now - self._window
+        while self._rescore_times and self._rescore_times[0] < cutoff:
+            self._rescore_times.popleft()
     def snapshot(self, group: str | None = None) -> MetricSnapshot:
         """Compute current metrics, optionally filtered by group.
 
