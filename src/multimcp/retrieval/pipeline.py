@@ -573,7 +573,8 @@ class RetrievalPipeline:
         conv_confidence = min(1.0, len(conv_query.split()) / 10.0) if conv_query else 0.0
         roots_changed = False
         explicit_tool_mention = any(
-            k in conv_query for k in all_registry_keys
+            k.split("__")[-1].replace("_", " ") in conv_query
+            for k in all_registry_keys
         ) if conv_query else False
 
         # Step 7: 6-tier fallback ladder
