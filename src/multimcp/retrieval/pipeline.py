@@ -17,6 +17,7 @@ from .models import (
     RetrievalConfig,
     RetrievalContext,
     ScoredTool,
+    SessionRoutingState,
     WorkspaceEvidence,
 )
 from .session import SessionStateManager
@@ -169,6 +170,16 @@ class RetrievalPipeline:
         self._session_tool_history: dict[str, list[str]] = {}
         self._session_arg_keys: dict[str, list[str]] = {}
         self._session_router_describes: dict[str, list[str]] = {}
+        # CF-2: Separate router proxy accounting (on_tool_called is_router_proxy=True path only)
+        self._session_router_proxies: dict[str, list[str]] = {}
+        # CF-3: Turn-scoped usage buckets for demotion protection
+        self._current_turn_used: dict[str, set[str]] = {}
+        self._just_finished_turn_used: dict[str, set[str]] = {}
+        # CF-4: Per-session routing state (SessionRoutingState), turn guard, rebuild deferral, snapshot pin
+        self._routing_states: dict[str, SessionRoutingState] = {}
+        self._in_turn: dict[str, bool] = {}
+        self._pending_rebuild: "dict[str, ToolMapping] | None" = None
+        self._turn_snapshot_version: dict[str, str] = {}
 
     # ── Session roots / telemetry ─────────────────────────────────────────────
 
@@ -344,25 +355,17 @@ class RetrievalPipeline:
                     if event.get("group") == "shadow":
                         continue
 
-                    # Check timestamp
-                    ts = event.get("timestamp") or event.get("scorer_latency_ms")
-                    # RankingEvent doesn't have a timestamp field — use session_id presence
-                    # as a heuristic that it's a valid ranking event.
-                    # For frequency prior we need the log's mtime as proxy if no ts.
-                    # Use file mtime / line-number-based estimation is impractical;
-                    # check if event has a recognizable timestamp field.
-                    event_time = event.get("event_time") or event.get("ts")
-                    if event_time is None:
-                        # Try to use scorer_latency_ms as existence check only
-                        # (no timestamp in RankingEvent schema — use file mtime as fallback)
-                        # Use file mtime; if file is newer than 7 days it may contain old entries
-                        # Conservative: count ALL non-shadow entries (no time filter possible)
-                        days_ago = 0.0
-                    else:
-                        event_ts = float(event_time)
+                    # Use the timestamp field added to RankingEvent (Issue 3 fix).
+                    # Legacy events without timestamp fall back to treating all entries
+                    # as within the window (days_ago=0) — conservative but safe.
+                    event_ts = event.get("timestamp")
+                    if event_ts is not None:
+                        event_ts = float(event_ts)
                         if event_ts < cutoff_epoch:
                             continue
                         days_ago = (time.time() - event_ts) / 86400.0
+                    else:
+                        days_ago = 0.0
 
                     decay = math.exp(-0.1 * days_ago)
 
@@ -463,12 +466,28 @@ class RetrievalPipeline:
     async def get_tools_for_list(
         self, session_id: str, conversation_context: str = ""
     ) -> list[types.Tool]:
-        """Called by _list_tools(). Returns tool list based on pipeline state.
+        """Return tool list based on pipeline state, implementing the exact turn-boundary state machine.
 
         When disabled: returns ALL tools including cached/disconnected (client=None).
-        When enabled: runs tiered fallback scoring pipeline and returns bounded set.
+        When enabled: runs tiered fallback scoring pipeline and returns bounded active set.
+
+        State machine executes in this exact order:
+        1. Kill-switch check
+        2. Turn-boundary entry: close previous turn
+        3. Pending rebuild check
+        4. Load/create SessionRoutingState
+        5. Increment turn_number
+        6. Pin catalog_version
+        7. Score (6-tier fallback ladder)
+        8. Promote evaluation
+        9. Demote evaluation
+        10. Post-boundary state sync
+        11. Write scoring signals to state
+        12. Build RankingEvent
+        13. Set _in_turn = True
+        14. Return tool list from state.active_tool_ids
         """
-        # Master kill switch — enabled=False always returns all tools
+        # Step 1: Master kill switch — enabled=False always returns all tools
         if not self.config.enabled:
             return [m.tool for m in self.tool_registry.values()]
 
@@ -478,84 +497,92 @@ class RetrievalPipeline:
         group = get_session_group(session_id, self.config)
 
         # Shadow mode: score but return all tools (backward compatible)
-        # Control sessions in canary mode also get all tools
         is_filtered = (
             self.config.rollout_stage == "ga"
             or (self.config.rollout_stage == "canary" and group == "canary")
         )
 
-        # Ensure session exists
+        # Step 2: Turn-boundary entry — close the previous turn
+        if self._in_turn.get(session_id, False):
+            # Close previous turn: roll current-turn bucket to just-finished snapshot
+            self._just_finished_turn_used[session_id] = self._current_turn_used.pop(session_id, set())
+            self._in_turn[session_id] = False
+        else:
+            # First call for this session: initialize just-finished bucket as empty
+            self._just_finished_turn_used.setdefault(session_id, set())
+
+        # Step 3: Execute pending rebuild if no session is mid-turn
+        if self._pending_rebuild is not None and not any(self._in_turn.values()):
+            rebuild = getattr(self.retriever, "rebuild_index", None)
+            if callable(rebuild):
+                rebuild(self._pending_rebuild)
+            self._pending_rebuild = None
+
+        # Step 4: Load or create SessionRoutingState; ensure SSM session exists
+        state = self._routing_states.get(session_id)
+        if state is None:
+            state = SessionRoutingState(session_id=session_id)
+            self._routing_states[session_id] = state
         self.session_manager.get_or_create_session(session_id)
-        active_keys = self.session_manager.get_active_tools(session_id)
+
+        # Step 5: Increment turn_number (canonical per-session turn counter)
+        state.turn_number += 1
+        turn = state.turn_number
+        self._session_turns[session_id] = turn
+
+        # Step 6: Pin catalog_version to current snapshot
+        current_version = ""
+        if hasattr(self.retriever, "get_snapshot_version"):
+            current_version = self.retriever.get_snapshot_version()
+        self._turn_snapshot_version[session_id] = current_version
+        state.catalog_version = current_version
 
         all_registry_keys = list(self.tool_registry.keys())
         candidates = list(self.tool_registry.values())
 
-        # Dynamic K: base 15, +3 if polyglot (>1 distinct lang: token), cap 20
-        dynamic_k = 15
+        # Dynamic K: base top_k, +3 if polyglot (>1 distinct lang: token), cap max_k
+        dynamic_k = self.config.top_k
         evidence = self._session_evidence.get(session_id)
         if evidence:
             lang_tokens = [k for k in evidence.merged_tokens if k.startswith("lang:")]
             if len(lang_tokens) > 1:
-                dynamic_k = 18
-        dynamic_k = min(20, dynamic_k)
+                dynamic_k = self.config.max_k
+        dynamic_k = min(self.config.max_k, dynamic_k)
 
-        # Reserve one slot for routing tool if enabled
-        if self.config.enable_routing_tool and _HAS_ROUTING_TOOL:
-            direct_k = max(1, dynamic_k - 1)
-        else:
-            direct_k = dynamic_k
+        # direct_k always equals dynamic_k; routing tool is additive, not a K slot
+        direct_k = dynamic_k
 
-        # Session context
-        turn = self._session_turns.get(session_id, 0)
         workspace_evidence: Optional[WorkspaceEvidence] = evidence
 
         # ── Build query strings ──────────────────────────────────────────────
 
-        # Env query from workspace evidence tokens
         env_query = ""
         if workspace_evidence and workspace_evidence.merged_tokens:
-            env_query = " ".join(
-                f"{k}:{v}" if ":" not in k else k
-                for k in workspace_evidence.merged_tokens
-            )
-            # Simpler: join keys as query terms
             env_query = " ".join(workspace_evidence.merged_tokens.keys())
 
-        # Conv query from extracted terms
         conv_query = ""
         if conversation_context:
             conv_query = _extract_conv_terms(conversation_context)
 
-        # Confidence signals for alpha computation
         ws_confidence = workspace_evidence.workspace_confidence if workspace_evidence else 0.0
         conv_confidence = min(1.0, len(conv_query.split()) / 10.0) if conv_query else 0.0
-        roots_changed = False  # tracked by set_session_roots caller
+        roots_changed = False
         explicit_tool_mention = any(
             k in conv_query for k in all_registry_keys
         ) if conv_query else False
 
-        # ── 6-tier fallback ladder ────────────────────────────────────────────
-
+        # Step 7: 6-tier fallback ladder
         fallback_tier = 1
         scored_tools: Optional[list[ScoredTool]] = None
+        fusion_alpha: float = 0.0
 
-        # Build RetrievalContext helpers
         def _env_ctx() -> RetrievalContext:
-            return RetrievalContext(
-                session_id=session_id,
-                query=env_query,
-                query_mode="env",
-            )
+            return RetrievalContext(session_id=session_id, query=env_query, query_mode="env")
 
         def _conv_ctx() -> RetrievalContext:
-            return RetrievalContext(
-                session_id=session_id,
-                query=conv_query,
-                query_mode="nl",
-            )
+            return RetrievalContext(session_id=session_id, query=conv_query, query_mode="nl")
 
-        # Tier 1: BMXF env + conv blend (normal operation, turn > 0)
+        # Tier 1: BMXF env + conv blend
         if (
             scored_tools is None
             and self._index_available()
@@ -567,19 +594,19 @@ class RetrievalPipeline:
             try:
                 env_ranked = await self.retriever.retrieve(_env_ctx(), candidates)
                 conv_ranked = await self.retriever.retrieve(_conv_ctx(), candidates)
-                alpha = _compute_alpha(
+                fusion_alpha = _compute_alpha(
                     turn=turn,
                     workspace_confidence=ws_confidence,
                     conv_confidence=conv_confidence,
                     roots_changed=roots_changed,
                     explicit_tool_mention=explicit_tool_mention,
                 )
-                scored_tools = _weighted_rrf(env_ranked, conv_ranked, alpha)
+                scored_tools = _weighted_rrf(env_ranked, conv_ranked, fusion_alpha)
                 fallback_tier = 1
             except Exception:
                 scored_tools = None
 
-        # Tier 2: BMXF env-only (conv query weak/empty or tier 1 failed)
+        # Tier 2: BMXF env-only
         if scored_tools is None and self._index_available() and env_query:
             try:
                 scored_tools = await self.retriever.retrieve(_env_ctx(), candidates)
@@ -587,7 +614,7 @@ class RetrievalPipeline:
             except Exception:
                 scored_tools = None
 
-        # Tier 3: KeywordRetriever env-only (BMXF unavailable)
+        # Tier 3: KeywordRetriever env-only
         if scored_tools is None and self._keyword_retriever_available() and env_query:
             try:
                 kr = getattr(self, "_keyword_retriever")
@@ -596,11 +623,9 @@ class RetrievalPipeline:
             except Exception:
                 scored_tools = None
 
-        # Tier 4: Static category defaults (project_type_guess confident)
+        # Tier 4: Static category defaults
         if scored_tools is None:
-            project_type, project_type_confident = self._classify_project_type(
-                workspace_evidence
-            )
+            project_type, project_type_confident = self._classify_project_type(workspace_evidence)
             if project_type_confident and project_type is not None and _HAS_STATIC_CATEGORIES:
                 scored_tools = self._static_category_defaults(project_type, dynamic_k)
                 if scored_tools:
@@ -608,7 +633,7 @@ class RetrievalPipeline:
                 else:
                     scored_tools = None
 
-        # Tier 5: Time-decayed frequency prior (7-day)
+        # Tier 5: Time-decayed frequency prior
         if scored_tools is None and self._has_frequency_prior():
             freq_tools = self._frequency_prior_tools(dynamic_k)
             if freq_tools:
@@ -620,52 +645,107 @@ class RetrievalPipeline:
             scored_tools = self._universal_fallback()
             fallback_tier = 6
 
-        # ── Select active set from scored tools ───────────────────────────────
-
-        # Sort by descending score and take top direct_k
+        # Sort by descending score
         scored_tools.sort(key=lambda s: s.score, reverse=True)
-        active_scored = scored_tools[:direct_k]
 
-        active_key_set = {s.tool_key for s in active_scored}
-        demoted_ids = [k for k in all_registry_keys if k not in active_key_set]
+        # Step 8: Promote evaluation at turn boundary
+        current_active = self.session_manager.get_active_tools(session_id)
+        active_key_set = set(current_active)
 
-        # Enforce invariant: never expose more than 20 direct tools
-        if len(active_scored) > 20:
-            active_scored = active_scored[:20]
+        k_minus_2 = max(1, dynamic_k - 2)
+        promote_candidates: list[str] = []
 
-        # Update session manager with new active set
-        if active_keys != active_key_set:
-            self.session_manager.get_or_create_session(session_id)
-            if hasattr(self.session_manager, "set_active_tools"):
-                self.session_manager.set_active_tools(session_id, active_key_set)
+        # Criterion 1: rank within K-2
+        for scored_tool in scored_tools[:k_minus_2]:
+            if scored_tool.tool_key not in active_key_set:
+                promote_candidates.append(scored_tool.tool_key)
+
+        # Criterion 2: router-proxied in >=2 of last 3 turns (CF-4)
+        current_turn = state.turn_number
+        for tool_key, turns in state.recent_router_proxies.items():
+            recent = [t for t in turns if t >= current_turn - 3]
+            if len(recent) >= 2 and tool_key not in active_key_set:
+                if tool_key not in promote_candidates:
+                    promote_candidates.append(tool_key)
+
+        newly_promoted = self.session_manager.promote(session_id, promote_candidates)
+
+        # Step 9: Demote evaluation at turn boundary
+        # Update active set after promotion
+        active_after_promote = self.session_manager.get_active_tools(session_id)
+        score_by_key = {s.tool_key: s.score for s in scored_tools}
+        rank_by_key = {s.tool_key: i for i, s in enumerate(scored_tools)}
+
+        k_plus_3 = dynamic_k + 3
+        demote_candidates: list[str] = []
+
+        if turn > 1:  # Only evaluate demotion after turn 1
+            for tool_key in list(active_after_promote):
+                rank = rank_by_key.get(tool_key, len(scored_tools))
+                if rank >= k_plus_3:
+                    state.consecutive_low_rank[tool_key] = state.consecutive_low_rank.get(tool_key, 0) + 1
+                    if state.consecutive_low_rank[tool_key] >= 2:
+                        demote_candidates.append(tool_key)
+                else:
+                    state.consecutive_low_rank[tool_key] = 0
+
+        # CF-3: Demotion protection from just-finished turn bucket (NOT full session history)
+        just_finished = self._just_finished_turn_used.get(session_id, set())
+        demoted = self.session_manager.demote(
+            session_id, demote_candidates, just_finished, max_per_turn=3
+        )
+        for key in demoted:
+            state.consecutive_low_rank.pop(key, None)
+
+        # Step 10: Post-boundary state sync — single authoritative pass from SSM
+        post_boundary_active = self.session_manager.get_active_tools(session_id)
+        state.active_tool_ids = list(post_boundary_active)
+        state.router_enum_tool_ids = [k for k in all_registry_keys if k not in post_boundary_active]
+
+        # Step 11: Write remaining scoring signals to state
+        state.alpha = fusion_alpha
+        state.active_k = len(state.active_tool_ids)
+        state.fallback_tier = fallback_tier
+        state.env_confidence = ws_confidence
+        state.conv_confidence = conv_confidence
 
         latency_ms = (time.monotonic() - t0) * 1000.0
 
-        # Get catalog version if available
-        catalog_version = ""
-        if hasattr(self.retriever, "get_snapshot_version"):
-            catalog_version = self.retriever.get_snapshot_version()
+        # Step 12: Build RankingEvent with correct signal sources (CF-2)
+        session_direct_calls = list(self._session_tool_history.get(session_id, []))
+        session_router_describes = list(self._session_router_describes.get(session_id, []))
+        session_router_proxies = list(self._session_router_proxies.get(session_id, []))
 
-        # Emit RankingEvent (OBS-02)
         event = RankingEvent(
             session_id=session_id,
             turn_number=turn,
-            catalog_version=catalog_version,
+            catalog_version=current_version,
             workspace_hash=workspace_evidence.workspace_hash if workspace_evidence else None,
             workspace_confidence=ws_confidence,
             conv_confidence=conv_confidence,
-            alpha=ws_confidence,  # approximate; exact alpha only computed in tier 1
-            active_k=len(active_scored),
+            alpha=fusion_alpha,
+            active_k=len(state.active_tool_ids),
             fallback_tier=fallback_tier,
-            active_tool_ids=[s.tool_key for s in active_scored],
-            router_enum_size=len(demoted_ids),
+            active_tool_ids=list(state.active_tool_ids),
+            router_enum_size=len(state.router_enum_tool_ids),
+            direct_tool_calls=session_direct_calls,
+            router_describes=session_router_describes,
+            router_proxies=session_router_proxies,
             scorer_latency_ms=latency_ms,
             group=group,
         )
         await self.logger.log_ranking_event(event)
 
+        # Step 13: Mark session as mid-turn
+        self._in_turn[session_id] = True
+
+        # Step 14: Assemble return value from post-boundary active set (NOT raw scored slice)
         if is_filtered:
             # CANARY/GA: return bounded active set + routing tool
+            active_tools_capped = state.active_tool_ids[:direct_k]
+            active_tools_set = set(active_tools_capped)
+            demoted_ids = state.router_enum_tool_ids
+
             routing_schema = None
             if (
                 self.config.enable_routing_tool
@@ -676,12 +756,18 @@ class RetrievalPipeline:
                 routing_schema = build_routing_tool_schema(demoted_ids)
 
             if self.ranker is not None and self.assembler is not None:
+                # Build ScoredTool list from active set for ranker/assembler
+                active_scored = [s for s in scored_tools if s.tool_key in active_tools_set]
                 ranked = self.ranker.rank(active_scored)
                 result = self.assembler.assemble(
                     ranked, self.config, routing_tool_schema=routing_schema
                 )
             else:
-                result = [s.tool_mapping.tool for s in active_scored]
+                result = [
+                    self.tool_registry[k].tool
+                    for k in active_tools_capped
+                    if k in self.tool_registry
+                ]
                 if routing_schema is not None:
                     result.append(routing_schema)
         else:
@@ -696,7 +782,13 @@ class RetrievalPipeline:
         Called by MCPProxyServer.register_client() and unregister_client()
         after any registry mutation (WIRE-02). No-op if retriever does not
         implement rebuild_index (e.g. PassthroughRetriever).
+
+        Mid-turn guard (CF-4): if any session is currently mid-turn, defer the
+        rebuild to the next get_tools_for_list() call via _pending_rebuild.
         """
+        if any(self._in_turn.values()):
+            self._pending_rebuild = dict(registry)
+            return
         rebuild = getattr(self.retriever, "rebuild_index", None)
         if callable(rebuild):
             rebuild(registry)
@@ -706,30 +798,73 @@ class RetrievalPipeline:
         session_id: str,
         tool_name: str,
         arguments: dict,
+        is_router_proxy: bool = False,
     ) -> bool:
-        """Called by _call_tool(). Tracks turns and triggers promote/demote evaluation.
+        """Called by _call_tool(). Records tool usage for conversation context and turn-boundary state.
 
-        Returns True if active set changed (caller should send list_changed notification).
+        Never promotes, never mutates active set — those happen only at turn boundaries
+        in get_tools_for_list(). Returns False always (list_changed emitted by _list_tools).
+
+        When is_router_proxy=True, this is the single write path for router proxy accounting
+        (CF-2): writes to _session_router_proxies and state.recent_router_proxies.
         """
         if not self.config.enabled:
             return False
 
-        # Increment turn counter for this session
-        self._session_turns[session_id] = self._session_turns.get(session_id, 0) + 1
-
-        # Track session tool history for conversation context
+        # CF-3: Write to turn-scoped bucket for demotion protection at next boundary
+        self._current_turn_used.setdefault(session_id, set()).add(tool_name)
+        # Write to session history for conv-context retrieval query construction only
         hist = self._session_tool_history.setdefault(session_id, [])
         hist.append(tool_name)
-
-        # Track argument keys
+        # Record argument keys for conversation context
         arg_keys = self._session_arg_keys.setdefault(session_id, [])
         arg_keys.extend(arguments.keys())
 
-        # Record tool usage for demote safety (used_this_turn)
-        # Demote evaluation is delegated to pipeline on the NEXT turn boundary
-        # For now: disclose any new tools based on what was called (promote via usage signal)
-        if hasattr(self.session_manager, 'promote') and tool_name in self.tool_registry:
-            newly_added = self.session_manager.promote(session_id, [tool_name])
-            return len(newly_added) > 0
+        # CF-2: If this is a routing-tool proxy call, write all proxy accounting
+        if is_router_proxy:
+            # Flat session list for RankingEvent.router_proxies
+            self._session_router_proxies.setdefault(session_id, []).append(tool_name)
+            # Turn-indexed structure for 2-of-3-turn promotion criterion (CF-4)
+            state = self._routing_states.get(session_id)
+            if state is not None:
+                turn = state.turn_number
+                turns_list = state.recent_router_proxies.setdefault(tool_name, [])
+                if not turns_list or turns_list[-1] != turn:
+                    turns_list.append(turn)
+                cutoff = turn - 3
+                state.recent_router_proxies[tool_name] = [t for t in turns_list if t >= cutoff]
 
         return False
+
+    def record_router_describe(self, session_id: str, tool_name: str) -> None:
+        """Record a tool name that was described via the routing tool.
+
+        Called by mcp_proxy._call_tool() after a describe=True routing call succeeds.
+        Used by get_session_router_describes() to provide conversation context.
+
+        Issue 2 fix: router describe targets are now written to session state.
+        """
+        describes = self._session_router_describes.setdefault(session_id, [])
+        describes.append(tool_name)
+
+    def cleanup_session(self, session_id: str) -> None:
+        """Release all per-session state held by this pipeline instance.
+
+        Pops session_id from every per-session dict and delegates to
+        SessionStateManager.cleanup_session(). Safe to call for sessions
+        that were never created (all pops are no-ops).
+        """
+        self._session_turns.pop(session_id, None)
+        self._session_roots.pop(session_id, None)
+        self._session_evidence.pop(session_id, None)
+        self._session_tool_history.pop(session_id, None)
+        self._session_arg_keys.pop(session_id, None)
+        self._session_router_describes.pop(session_id, None)
+        self._session_router_proxies.pop(session_id, None)
+        self._current_turn_used.pop(session_id, None)
+        self._just_finished_turn_used.pop(session_id, None)
+        self._routing_states.pop(session_id, None)
+        self._in_turn.pop(session_id, None)
+        self._turn_snapshot_version.pop(session_id, None)
+        self.session_manager.cleanup_session(session_id)
+
