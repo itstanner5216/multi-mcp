@@ -32,7 +32,7 @@ def build_routing_tool_schema(demoted_tool_ids: list[str]) -> types.Tool:
         A types.Tool representing the routing tool with the full enum.
     """
     return types.Tool(
-        name="request_tool",
+        name=ROUTING_TOOL_NAME,
         description=(
             "Access tools not in your active set. "
             "Use describe=true to get full schema, or provide arguments to call directly."
