@@ -184,31 +184,25 @@ async def test_ga_stage_filters_tools():
 def test_startup_wiring_is_shadow_mode():
     """The startup wiring must use shadow mode (not forced GA mode).
 
-    Verifies that multi_mcp.py wires RetrievalConfig with:
-      enabled=True
-      shadow_mode=True
-      rollout_stage="shadow"
-
-    This test fails if the production code is wired in GA mode, which would
-    expose active filtering to users before the rollout is validated.
+    Asserts runtime object state returned by the production factory function
+    rather than inspecting source text, so formatting changes don't cause
+    spurious failures and the test exercises real field values.
     """
-    import inspect
-    import src.multimcp.multi_mcp as multi_mcp_module
+    from src.multimcp.multi_mcp import _make_startup_retrieval_config
 
-    source = inspect.getsource(multi_mcp_module)
+    config = _make_startup_retrieval_config()
 
-    # Find the RetrievalConfig(...) constructor call in the source
-    # The startup wiring block should NOT have rollout_stage="ga"
-    assert 'rollout_stage="ga"' not in source, (
-        "Startup wiring must not set rollout_stage='ga' — use 'shadow' for safe rollout"
+    assert config.enabled is True, (
+        "Startup config must have enabled=True so the pipeline runs scoring/logging"
     )
-
-    assert 'rollout_stage="shadow"' in source, (
-        "Startup wiring must set rollout_stage='shadow' for temporary shadow mode"
+    assert config.shadow_mode is True, (
+        "Startup config must have shadow_mode=True — active filtering must be off pre-Phase-9"
     )
-
-    assert 'shadow_mode=True' in source, (
-        "Startup wiring must set shadow_mode=True for temporary shadow mode"
+    assert config.rollout_stage == "shadow", (
+        f"Startup config rollout_stage must be 'shadow', got {config.rollout_stage!r}"
+    )
+    assert config.rollout_stage != "ga", (
+        "Startup config must not be in 'ga' stage before rollout validation is complete"
     )
 
 

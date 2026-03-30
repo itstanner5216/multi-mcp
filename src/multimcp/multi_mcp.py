@@ -43,6 +43,21 @@ class MCPSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="MULTI_MCP_")
 
 
+def _make_startup_retrieval_config():
+    """Return the RetrievalConfig used at server startup (shadow mode, pre-Phase-9).
+
+    Extracted as a module-level factory so tests can assert on the runtime object's
+    field values rather than inspecting source text.
+    """
+    from src.multimcp.retrieval.models import RetrievalConfig
+
+    return RetrievalConfig(
+        enabled=True,
+        shadow_mode=True,
+        rollout_stage="shadow",
+    )
+
+
 class MultiMCP:
     def __init__(self, **settings: Any):
         self.settings = MCPSettings(**settings)
@@ -542,13 +557,7 @@ class MultiMCP:
             from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
             from src.multimcp.retrieval.logging import NullLogger, FileRetrievalLogger
             from src.multimcp.retrieval.session import SessionStateManager
-            from src.multimcp.retrieval.models import RetrievalConfig
-
-            retrieval_config = RetrievalConfig(
-                enabled=True,
-                shadow_mode=True,
-                rollout_stage="shadow",
-            )
+            retrieval_config = _make_startup_retrieval_config()
             bmxf_retriever = BMXFRetriever(config=retrieval_config)
             self.bmxf_retriever = bmxf_retriever
 
