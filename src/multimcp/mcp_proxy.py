@@ -484,13 +484,12 @@ class MCPProxyServer(server.Server):
                             _sid, actual_tool_name, call_args, is_router_proxy=True
                         )
                     except Exception as exc:
-                        logger = get_logger(__name__).bind(
+                        self.logger.bind(
                             tool_name=actual_tool_name,
                             session_id=_sid,
-                        )
-                        logger.warning(
-                            "Failed to record router proxy tool call in retrieval pipeline",
                             error=str(exc),
+                        ).warning(
+                            "Failed to record router proxy tool call in retrieval pipeline",
                         )
                 return proxy_result
             # Record describe targets to pipeline session state so
