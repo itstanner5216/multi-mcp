@@ -27,9 +27,9 @@ STATIC_CATEGORIES: dict[str, dict[str, list[str]]] = {
     },
 }
 
+# Tier 6: namespace priority order for universal 12-tool fallback set.
 TIER6_NAMESPACE_PRIORITY: list[str] = [
     "filesystem", "shell", "web_search", "github",
     "docker", "npm", "pip", "cargo",
     "kubectl", "terraform", "slack", "context7",
 ]
-"""Tier 6: namespace priority order for universal 12-tool fallback set."""
