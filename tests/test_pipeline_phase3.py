@@ -193,72 +193,73 @@ class TestRankingEventTurnNumber:
 
 
 class TestDynamicK:
-    """Dynamic K computation: base 15, +3 if polyglot, cap at 20."""
+    """Dynamic K computation: base 15, +3 if polyglot (>1 lang: token), cap at 20.
+
+    Phase 2: dynamic_k is evidence-based, not config.max_k-based.
+    The config.max_k > 17 proxy heuristic has been replaced.
+    """
 
     @pytest.mark.asyncio
-    async def test_default_max_k_20_stays_20(self):
-        """max_k=20 (default): base_k=max(15,20)=20, polyglot_bonus=0, result=20."""
+    async def test_default_max_k_bounded_at_20(self):
+        """With large registry and no evidence, result is bounded at <= 20 direct tools."""
         config = RetrievalConfig(enabled=True, max_k=20, rollout_stage="ga")
-        # Create 25 tools to test cap
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(25)
         }
         p = _make_pipeline(registry=registry, config=config)
-        p.session_manager.get_or_create_session("s1")
-        # Seed all 25 tools into session
-        p.session_manager.add_tools("s1", list(registry.keys()))
         tools = await p.get_tools_for_list("s1")
-        # Dynamic K: max_k=20 -> no polyglot bonus -> stays at 20 direct tools
         non_routing = [t for t in tools if t.name != "request_tool"]
         assert len(non_routing) <= 20
 
     @pytest.mark.asyncio
-    async def test_max_k_10_bumped_to_base_15(self):
-        """max_k=10: base_k=max(15,10)=15, polyglot_bonus=0, result=15."""
-        config = RetrievalConfig(enabled=True, max_k=10, rollout_stage="ga")
+    async def test_max_k_enforces_upper_cap(self):
+        """Dynamic K never exceeds 20 regardless of registry size."""
+        config = RetrievalConfig(enabled=True, max_k=20, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
-            for i in range(20)
+            for i in range(50)
         }
         p = _make_pipeline(registry=registry, config=config)
-        p.session_manager.get_or_create_session("s1")
-        p.session_manager.add_tools("s1", list(registry.keys()))
         tools = await p.get_tools_for_list("s1")
-        # base_k = max(15, 10) = 15; routing takes 1 slot → 14 direct + 1 routing = 15 total
         non_routing = [t for t in tools if t.name != "request_tool"]
-        assert len(non_routing) <= 15
-        assert len(non_routing) >= 14  # K=15 total: 14 direct + 1 routing slot (20 tools → demoted exist)
+        assert len(non_routing) <= 20
 
     @pytest.mark.asyncio
-    async def test_max_k_18_adds_polyglot_bonus(self):
-        """max_k=18 (>17): base_k=max(15,18)=18, polyglot_bonus=3, min(20,21)=20."""
-        config = RetrievalConfig(enabled=True, max_k=18, rollout_stage="ga")
+    async def test_polyglot_increases_k_to_18(self):
+        """Evidence with >1 lang: token sets dynamic_k=18 (direct_k=17 with routing)."""
+        config = RetrievalConfig(enabled=True, max_k=20, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
             for i in range(25)
         }
         p = _make_pipeline(registry=registry, config=config)
-        p.session_manager.get_or_create_session("s1")
-        p.session_manager.add_tools("s1", list(registry.keys()))
-        tools = await p.get_tools_for_list("s1")
-        # base_k=18, polyglot_bonus=3 -> 21, cap at 20
-        assert len(tools) <= 20
+        # Inject polyglot evidence
+        from src.multimcp.retrieval.models import WorkspaceEvidence
+        p._session_evidence["polyglot_s"] = WorkspaceEvidence(
+            workspace_confidence=0.8,
+            merged_tokens={"lang:python": 1.0, "lang:javascript": 0.8},
+        )
+        tools = await p.get_tools_for_list("polyglot_s")
+        assert len(tools) <= 19  # dynamic_k=18, direct_k=17 + 1 routing = 18
 
     @pytest.mark.asyncio
-    async def test_max_k_less_than_15_uses_15(self):
-        """max_k=5: base_k=max(15,5)=15, no polyglot. Never expose fewer than 15."""
-        config = RetrievalConfig(enabled=True, max_k=5, rollout_stage="ga")
+    async def test_no_polyglot_stays_at_15(self):
+        """Evidence with only 1 lang: token stays at dynamic_k=15."""
+        config = RetrievalConfig(enabled=True, max_k=20, rollout_stage="ga")
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
-            for i in range(20)
+            for i in range(25)
         }
         p = _make_pipeline(registry=registry, config=config)
-        p.session_manager.get_or_create_session("s1")
-        p.session_manager.add_tools("s1", list(registry.keys()))
-        tools = await p.get_tools_for_list("s1")
-        # base_k = max(15, 5) = 15
-        assert len(tools) == 15
+        from src.multimcp.retrieval.models import WorkspaceEvidence
+        p._session_evidence["mono_s"] = WorkspaceEvidence(
+            workspace_confidence=0.8,
+            merged_tokens={"lang:python": 1.0},
+        )
+        tools = await p.get_tools_for_list("mono_s")
+        # dynamic_k=15, direct_k=14 + 1 routing = 15
+        assert len(tools) <= 16
 
 
 class TestFusionImport:

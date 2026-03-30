@@ -72,23 +72,26 @@ def make_pipeline(registry: dict, max_k: int = 5, enable_routing_tool: bool = Tr
 
 
 class TestBoundedK:
-    """get_tools_for_list() returns at most max_k direct tools + routing tool."""
+    """get_tools_for_list() returns bounded direct tools + optional routing tool.
+
+    Phase 2: dynamic_k is evidence-based (base 15, polyglot 18, cap 20).
+    config.max_k is the cap; direct_k = dynamic_k - 1 (routing tool slot).
+    """
 
     @pytest.mark.asyncio
-    async def test_max_k_enforced_with_10_tools_max_k_5(self):
-        """With 10 tools and max_k=5, returns at most 5 active tools (plus routing)."""
-        registry = make_registry(10)
-        pipeline = make_pipeline(registry, max_k=5)
+    async def test_max_k_enforced_with_large_registry(self):
+        """With 50 tools and no evidence, returns at most dynamic_k direct tools (<= 20)."""
+        registry = make_registry(50)
+        pipeline = make_pipeline(registry, max_k=20)
         result = await pipeline.get_tools_for_list("session1")
-        # At most max_k=5 direct tools plus at most 1 routing tool
         non_routing = [t for t in result if t.name != "request_tool"]
-        assert len(non_routing) <= 5
+        assert len(non_routing) <= 20
 
     @pytest.mark.asyncio
     async def test_routing_tool_present_when_demoted_tools_exist(self):
         """When there are demoted tools, routing tool is included."""
-        registry = make_registry(10)
-        pipeline = make_pipeline(registry, max_k=5, enable_routing_tool=True)
+        registry = make_registry(50)
+        pipeline = make_pipeline(registry, max_k=20, enable_routing_tool=True)
         result = await pipeline.get_tools_for_list("session1")
         tool_names = [t.name for t in result]
         assert "request_tool" in tool_names
@@ -96,21 +99,21 @@ class TestBoundedK:
     @pytest.mark.asyncio
     async def test_routing_tool_absent_when_disabled(self):
         """When enable_routing_tool=False, routing tool is not in result."""
-        registry = make_registry(10)
-        pipeline = make_pipeline(registry, max_k=5, enable_routing_tool=False)
+        registry = make_registry(50)
+        pipeline = make_pipeline(registry, max_k=20, enable_routing_tool=False)
         result = await pipeline.get_tools_for_list("session1")
         tool_names = [t.name for t in result]
         assert "request_tool" not in tool_names
 
     @pytest.mark.asyncio
-    async def test_registry_smaller_than_max_k(self):
-        """With fewer tools than max_k, all tools returned (no routing tool needed)."""
+    async def test_registry_smaller_than_dynamic_k(self):
+        """With fewer tools than dynamic_k, all tools returned (no routing tool needed)."""
         registry = make_registry(3)
-        pipeline = make_pipeline(registry, max_k=5, enable_routing_tool=True)
+        pipeline = make_pipeline(registry, max_k=20, enable_routing_tool=True)
         result = await pipeline.get_tools_for_list("session1")
-        # Only 3 tools, max_k=5, no demoted tools so no routing tool
+        # Only 3 tools total — all returned, no demoted tools, no routing tool
         non_routing = [t for t in result if t.name != "request_tool"]
-        assert len(non_routing) <= 5
+        assert len(non_routing) <= 3
 
     @pytest.mark.asyncio
     async def test_disabled_pipeline_returns_all_tools(self):
@@ -138,27 +141,30 @@ class TestBoundedK:
 
 
 class TestFallbackTier6:
-    """Tier 6 fallback returns top-30 static defaults, never full registry."""
+    """Tier 6 fallback returns 12-tool universal set, never full registry.
+
+    Phase 2: Tier 6 exposes exactly 12 direct tools (not 30 as in Phase 1).
+    Core invariant: never more than 20 direct tools at any tier.
+    """
 
     @pytest.mark.asyncio
-    async def test_tier6_returns_at_most_30_when_registry_large(self):
-        """With 50 tools and all fallback paths exhausted, returns at most 30."""
+    async def test_tier6_returns_at_most_20_when_registry_large(self):
+        """With 50 tools and all fallback paths exhausted, returns at most 20 direct tools."""
         registry = make_registry(50)
-        pipeline = make_pipeline(registry, max_k=5, enable_routing_tool=True)
+        pipeline = make_pipeline(registry, max_k=20, enable_routing_tool=True)
         # Force empty active keys by using a session with no state
         result = await pipeline.get_tools_for_list("new_session_xyz")
         non_routing = [t for t in result if t.name != "request_tool"]
-        # Should have at most max_k=5 direct tools (not 50 full registry)
-        assert len(non_routing) <= 30
+        assert len(non_routing) <= 20
 
     @pytest.mark.asyncio
     async def test_tier6_bounded_never_full_registry(self):
         """With 100 tools, the result is bounded (never full catalog exposed)."""
         registry = make_registry(100)
-        pipeline = make_pipeline(registry, max_k=5, enable_routing_tool=True)
+        pipeline = make_pipeline(registry, max_k=20, enable_routing_tool=True)
         result = await pipeline.get_tools_for_list("fresh_session")
         non_routing = [t for t in result if t.name != "request_tool"]
-        assert len(non_routing) <= 30  # Tier 6 caps at 30
+        assert len(non_routing) <= 20  # Core invariant: max 20 direct tools
 
 
 class TestRankingEventEmission:
@@ -207,18 +213,19 @@ class TestRankingEventEmission:
 
     @pytest.mark.asyncio
     async def test_ranking_event_active_k_bounded(self):
-        """RankingEvent.active_k == min(len(active_keys), config.max_k)."""
-        registry = make_registry(10)
+        """RankingEvent.active_k is bounded by dynamic_k (max 20, core invariant)."""
+        registry = make_registry(50)
         captured_events = []
 
         class CapturingLogger(NullLogger):
             async def log_ranking_event(self, event):
                 captured_events.append(event)
 
-        pipeline = make_pipeline(registry, max_k=5, logger=CapturingLogger())
+        pipeline = make_pipeline(registry, max_k=20, logger=CapturingLogger())
         await pipeline.get_tools_for_list("session1")
         event = captured_events[0]
-        assert event.active_k <= 5
+        # Phase 2: dynamic_k is evidence-based (15 base, cap 20); active_k <= 20
+        assert event.active_k <= 20
 
     @pytest.mark.asyncio
     async def test_ranking_event_router_enum_size_is_demoted_count(self):
