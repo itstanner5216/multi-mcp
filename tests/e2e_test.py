@@ -35,7 +35,7 @@ async def test_sse_mode():
         client = MultiServerMCPClient({
             "multi-mcp": {
                 "transport": "sse",
-                "url": "http://127.0.0.1:8085/sse",
+                "url": "http://127.0.0.1:8083/sse",
             }
         })
         await run_e2e_test_with_client(client, EXPECTED_TOOLS, TEST_PROMPTS)

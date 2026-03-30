@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 07
-status: Executing Phase 07
+current_phase: 08
+status: Executing Phase 08
 stopped_at: "Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing"
-last_updated: "2026-03-30T00:57:20.619Z"
+last_updated: "2026-03-30T04:36:20.338Z"
 progress:
   total_phases: 9
   completed_phases: 4
@@ -19,7 +19,7 @@ progress:
 
 - **Milestone:** Phase 7+ — Core Pipeline Wiring + Hardening
 - **Current Phase:** 09
-- **Phase Status:** Addressing review comments
+- **Phase Status:** Integration sync — all review fixes applied, k8s removed, IP policing removed
 - **Last Updated:** 2026-03-30
 
 ## Active Phase
@@ -88,3 +88,4 @@ Stopped at: Completed 07-01-PLAN.md: Core pipeline wiring, 1031 tests passing
 | 2026-03-30 | Routing dispatch uses ROUTING_TOOL_NAME not ROUTING_TOOL_KEY (07-01) | Model calls "request_tool" not "__routing__request_tool" |
 | 2026-03-30 | dynamic_k evidence-based not config.max_k heuristic (07-01) | Source plan line 292; 15 base, 18 polyglot, cap 20 |
 | 2026-03-30 | Tier 6 caps at 12 tools (not 30); anchor seeding replaced by fallback ladder (07-01) | Source plan line 898; anchor concept replaced by scoring-based active set |
+| 2026-03-30 | **TEMP** Default port changed 8085 → 8083 for Phase 8/9 test runs | User's always-on multi-mcp instance occupies 8085; conflicts with e2e test_sse_mode. **Revert to 8085 after Phase 9**: tests/e2e_test.py:38, main.py:17, src/multimcp/multi_mcp.py:34, start-server.sh |

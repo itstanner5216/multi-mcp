@@ -14,7 +14,7 @@ def parse_args():
     start = sub.add_parser("start", help="Start the proxy server")
     start.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
     start.add_argument("--host", type=str, default="127.0.0.1")
-    start.add_argument("--port", type=int, default=8085)
+    start.add_argument("--port", type=int, default=8083)
     start.add_argument(
         "--config", type=str, default=None,
         help="Path to MCP JSON config. If omitted, auto-discovers from Claude plugins and YAML sources."

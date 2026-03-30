@@ -48,7 +48,7 @@ def _make_pipeline(
 
 
 class TestTurnTracking:
-    """Turn counter increments on each on_tool_called()."""
+    """Turn counter advances at turn boundaries (get_tools_for_list), not per tool call."""
 
     @pytest.mark.asyncio
     async def test_session_turns_initializes_to_zero(self):
@@ -59,29 +59,36 @@ class TestTurnTracking:
         assert p._session_turns == {}
 
     @pytest.mark.asyncio
-    async def test_on_tool_called_increments_turn_counter(self):
-        """Each call increments the turn counter for the session."""
+    async def test_on_tool_called_does_not_increment_turn_counter(self):
+        """on_tool_called records tool usage but does NOT advance the turn counter.
+
+        Issue 7 fix: turn advancement is deferred to get_tools_for_list() so all
+        tools within a single request are treated as one turn, not N turns.
+        """
         p = _make_pipeline()
         await p.on_tool_called("sess-1", "some_tool", {})
-        assert p._session_turns.get("sess-1", 0) == 1
+        # Turn counter is still 0 — it advances at the next get_tools_for_list boundary
+        assert p._session_turns.get("sess-1", 0) == 0
 
     @pytest.mark.asyncio
-    async def test_on_tool_called_multiple_increments(self):
-        """Multiple calls increment the counter correctly."""
+    async def test_on_tool_called_multiple_calls_no_increment(self):
+        """Multiple on_tool_called() in one request still do not advance turn counter."""
         p = _make_pipeline()
         for _ in range(3):
             await p.on_tool_called("sess-1", "some_tool", {})
-        assert p._session_turns.get("sess-1", 0) == 3
+        # Still 0 — turn only advances at get_tools_for_list boundary
+        assert p._session_turns.get("sess-1", 0) == 0
 
     @pytest.mark.asyncio
     async def test_on_tool_called_sessions_independent(self):
-        """Turn counters are independent per session."""
+        """Tool histories are independent per session (turns still 0 until boundary)."""
         p = _make_pipeline()
         await p.on_tool_called("sess-1", "tool_a", {})
         await p.on_tool_called("sess-1", "tool_a", {})
         await p.on_tool_called("sess-2", "tool_b", {})
-        assert p._session_turns.get("sess-1", 0) == 2
-        assert p._session_turns.get("sess-2", 0) == 1
+        # Neither session has had a turn boundary yet
+        assert p._session_turns.get("sess-1", 0) == 0
+        assert p._session_turns.get("sess-2", 0) == 0
 
     @pytest.mark.asyncio
     async def test_on_tool_called_disabled_no_increment(self):
@@ -93,7 +100,7 @@ class TestTurnTracking:
 
 
 class TestOnToolCalledPromote:
-    """on_tool_called triggers promote() when tool is known."""
+    """on_tool_called records tools; promotion happens at the turn boundary."""
 
     @pytest.mark.asyncio
     async def test_returns_false_when_tool_not_in_registry(self):
@@ -116,23 +123,28 @@ class TestOnToolCalledPromote:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_returns_true_when_new_tool_promoted(self):
-        """Tool in registry but not yet active: promote returns it, return True."""
+    async def test_returns_false_always_promotion_deferred(self):
+        """on_tool_called always returns False — promotion is deferred to the next
+        get_tools_for_list() call (turn boundary), not executed per tool call.
+
+        Issue 7 fix: separates "record tool used" from "promote/advance turn".
+        """
         tool = _make_tool("new_tool")
         registry = {"github__new_tool": _make_mapping("github", tool)}
         p = _make_pipeline(registry=registry)
         # Create session WITHOUT the tool
         p.session_manager.get_or_create_session("s1")
         result = await p.on_tool_called("s1", "github__new_tool", {})
-        assert result is True
+        # Returns False — promotion happens at the next get_tools_for_list turn boundary
+        assert result is False
 
     @pytest.mark.asyncio
-    async def test_turn_increments_even_without_promotion(self):
-        """Turn counter increments regardless of whether promotion happens."""
+    async def test_turn_does_not_increment_without_boundary(self):
+        """Turn counter stays at 0 until get_tools_for_list() is called."""
         p = _make_pipeline(registry={})
         p.session_manager.get_or_create_session("s1")
         await p.on_tool_called("s1", "missing_tool", {})
-        assert p._session_turns.get("s1", 0) == 1
+        assert p._session_turns.get("s1", 0) == 0
 
 
 class CapturingLogger(NullLogger):
@@ -146,11 +158,15 @@ class CapturingLogger(NullLogger):
 
 
 class TestRankingEventTurnNumber:
-    """RankingEvent.turn_number uses real turn count (not hardcoded 0)."""
+    """RankingEvent.turn_number reflects the turn boundary, not on_tool_called count.
+
+    Issue 7 fix: turn is advanced in get_tools_for_list() (the true turn boundary).
+    First get_tools_for_list() call emits turn_number=1 (advanced from 0).
+    """
 
     @pytest.mark.asyncio
-    async def test_ranking_event_turn_number_zero_initially(self):
-        """On first get_tools_for_list call, turn_number = 0 (no calls yet)."""
+    async def test_ranking_event_turn_number_one_on_first_list(self):
+        """On first get_tools_for_list call, turn_number = 1 (boundary advanced from 0)."""
         config = RetrievalConfig(enabled=True, max_k=5)
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
@@ -166,11 +182,15 @@ class TestRankingEventTurnNumber:
         )
         await p.get_tools_for_list("s1")
         assert len(logger.events) == 1
-        assert logger.events[0].turn_number == 0  # No on_tool_called yet
+        assert logger.events[0].turn_number == 1  # First boundary: 0 → 1
 
     @pytest.mark.asyncio
-    async def test_ranking_event_turn_number_reflects_actual_turn(self):
-        """After two on_tool_called(), get_tools_for_list emits turn_number=2."""
+    async def test_ranking_event_turn_number_reflects_list_calls(self):
+        """Each get_tools_for_list call advances the turn counter by 1.
+
+        Issue 7 fix: turn advances at get_tools_for_list (turn boundary), not at
+        on_tool_called. So 2 tool calls followed by 1 get_tools_for_list = turn 1.
+        """
         config = RetrievalConfig(enabled=True, max_k=5)
         registry = {
             f"srv__{i}": _make_mapping("srv", _make_tool(f"tool_{i}"))
@@ -184,12 +204,12 @@ class TestRankingEventTurnNumber:
             config=config,
             tool_registry=registry,
         )
-        # Simulate two tool calls
+        # Simulate two tool calls followed by one tools/list request
         await p.on_tool_called("s1", "unknown_a", {})
         await p.on_tool_called("s1", "unknown_b", {})
         await p.get_tools_for_list("s1")
         assert len(logger.events) == 1
-        assert logger.events[0].turn_number == 2
+        assert logger.events[0].turn_number == 1  # One boundary crossed
 
 
 class TestDynamicK:
