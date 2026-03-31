@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: multi-mcp
+  namespace: multi-mcp
 spec:
   replicas: 1
   selector:
@@ -12,17 +13,38 @@ spec:
       labels:
         app: multi-mcp
     spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: multi-mcp
-        image: multi-mcp:latest
+        image: multi-mcp:1.0.0
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8083
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: multi-mcp-service
+  namespace: multi-mcp
 spec:
   type: NodePort
   selector:
