@@ -928,10 +928,7 @@ class MultiMCP:
                     await self.proxy.register_client(name, client)
                 # Rebuild the active retriever index after dynamic server add when supported.
                 if self.proxy.retrieval_pipeline is not None and self.proxy.tool_to_server:
-                    active_retriever = self.proxy.retrieval_pipeline.retriever
-                    rebuild = getattr(active_retriever, "rebuild_index", None)
-                    if rebuild is not None:
-                        rebuild(self.proxy.tool_to_server)
+                    self.proxy.retrieval_pipeline.rebuild_catalog(self.proxy.tool_to_server)
                 return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
             except ValueError as e:
                 # Security validation failure (command not allowed, SSRF attempt, etc.)
