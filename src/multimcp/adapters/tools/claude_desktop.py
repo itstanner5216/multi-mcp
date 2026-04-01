@@ -90,7 +90,10 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
                 continue
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-                result.update(data.get("mcpServers", {}))
+                if isinstance(data, dict):
+                    mcp_servers = data.get("mcpServers")
+                    if isinstance(mcp_servers, dict):
+                        result.update(mcp_servers)
             except (json.JSONDecodeError, OSError):
                 pass
         return result
