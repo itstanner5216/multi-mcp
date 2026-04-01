@@ -9,14 +9,11 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
-import pytest
 import yaml
 
 from src.multimcp.adapters import AdapterRegistry, get_adapter, list_adapters
-from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -987,7 +984,7 @@ class TestBackupMechanism:
         assert bak.read_text(encoding="utf-8") == '{"mcpServers": {}}'
 
     def test_backup_uses_configured_backup_dir(self, tmp_path: Path) -> None:
-        """When backup_dir is set, .bak is written there instead."""
+        """When backup_dir is set, .bak is written there with tool_name prefix."""
         src_dir = tmp_path / "config"
         src_dir.mkdir()
         bak_dir = tmp_path / "backups"
@@ -996,7 +993,7 @@ class TestBackupMechanism:
         adapter = self._adapter()
         adapter.backup_dir = bak_dir
         adapter._backup(p)
-        bak = bak_dir / "settings.json.bak"
+        bak = bak_dir / f"{adapter.tool_name}_settings.json.bak"
         assert bak.exists()
         assert not (src_dir / "settings.json.bak").exists()
 

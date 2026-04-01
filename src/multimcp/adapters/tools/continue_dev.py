@@ -58,7 +58,10 @@ class ContinueDevAdapter(MCPConfigAdapter):
     def register_server(self, name: str, config: Dict) -> None:
         """Add or replace an entry in the ``mcpServers`` list."""
         data = self.read_config()
-        servers: List[Any] = data.setdefault("mcpServers", [])
+        existing = data.get("mcpServers", [])
+        if not isinstance(existing, list):
+            existing = []
+        servers: List[Any] = existing
         # Remove any existing entry with the same name
         servers = [s for s in servers if not (isinstance(s, dict) and s.get("name") == name)]
         # Ensure the method argument wins by merging config first, then overriding name

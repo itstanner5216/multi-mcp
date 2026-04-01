@@ -68,7 +68,13 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
         path = self.config_path()
         if path is None or not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            logger.warning(
+                f"Config at {path} returned non-dict data ({type(data).__name__}), using empty config"
+            )
+            return {}
+        return data
 
     def write_config(self, data: Dict) -> None:
         """Write *data* to the Claude Desktop config file."""
@@ -90,7 +96,12 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
         Note: Claude Code entries take precedence over Claude Desktop entries with the
         same name. Any overwrites are logged for visibility.
         """
-        result: Dict[str, Dict] = self.read_config().get("mcpServers", {})
+        raw_mcp = self.read_config().get("mcpServers", {})
+        if not isinstance(raw_mcp, dict):
+            logger.warning(
+                f"mcpServers key contains non-dict value ({type(raw_mcp).__name__}), using empty dict"
+            )
+        result: Dict[str, Dict] = raw_mcp if isinstance(raw_mcp, dict) else {}
         # Also check Claude Code config files
         for path in self._claude_code_paths():
             if not path.exists():
