@@ -56,11 +56,7 @@ class ClineAdapter(MCPConfigAdapter):
         vscode = self._vscode_path()
         if vscode.exists():
             return vscode
-        cli = self._cli_path()
-        if cli.exists():
-            return cli
-        # Default to VS Code path for writes when neither exists yet
-        return vscode
+        return self._cli_path()
 
     def read_config(self) -> Dict:
         """Read Cline's MCP settings, returning {} if the file is absent."""
