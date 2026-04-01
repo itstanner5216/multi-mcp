@@ -9,12 +9,9 @@ Covers the new install and scan CLI commands added in this PR, including:
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Optional
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from src.multimcp.cli import cmd_install, cmd_scan, _DEFAULT_SERVER_NAME, _DEFAULT_SERVER_CONFIG
 

@@ -9,14 +9,11 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
-import pytest
 import yaml
 
 from src.multimcp.adapters import AdapterRegistry, get_adapter, list_adapters
-from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 # ---------------------------------------------------------------------------
@@ -987,7 +984,7 @@ class TestBackupMechanism:
         assert bak.read_text(encoding="utf-8") == '{"mcpServers": {}}'
 
     def test_backup_uses_configured_backup_dir(self, tmp_path: Path) -> None:
-        """When backup_dir is set, .bak is written there instead."""
+        """When backup_dir is set, .bak is written there with tool_name prefix."""
         src_dir = tmp_path / "config"
         src_dir.mkdir()
         bak_dir = tmp_path / "backups"
@@ -996,7 +993,7 @@ class TestBackupMechanism:
         adapter = self._adapter()
         adapter.backup_dir = bak_dir
         adapter._backup(p)
-        bak = bak_dir / "settings.json.bak"
+        bak = bak_dir / f"{adapter.tool_name}_settings.json.bak"
         assert bak.exists()
         assert not (src_dir / "settings.json.bak").exists()
 
@@ -1062,3 +1059,339 @@ class TestYamlConfigBackupDir:
         save_config(cfg, p)
         loaded = load_config(p)
         assert loaded.backup_dir == "/tmp/backups"
+
+
+# ---------------------------------------------------------------------------
+# New PR: ClaudeDesktopAdapter – non-dict config validation
+# ---------------------------------------------------------------------------
+
+class TestClaudeDesktopNonDictValidation:
+    """Tests for the new non-dict guard added to ClaudeDesktopAdapter.read_config
+    and ClaudeDesktopAdapter.discover_servers."""
+
+    def _adapter(self):
+        return get_adapter("claude_desktop")
+
+    # --- read_config ---
+
+    def test_read_config_returns_empty_when_json_is_list(self, tmp_path: Path) -> None:
+        """read_config must return {} when the JSON root is a list, not a dict."""
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps(["item1", "item2"]), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            result = adapter.read_config()
+        assert result == {}
+
+    def test_read_config_returns_empty_when_json_is_string(self, tmp_path: Path) -> None:
+        """read_config must return {} when the JSON root is a bare string."""
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps("just a string"), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            result = adapter.read_config()
+        assert result == {}
+
+    def test_read_config_returns_empty_when_json_is_number(self, tmp_path: Path) -> None:
+        """read_config must return {} when the JSON root is a number."""
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text("42", encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            result = adapter.read_config()
+        assert result == {}
+
+    def test_read_config_returns_empty_when_json_is_boolean(self, tmp_path: Path) -> None:
+        """read_config must return {} when the JSON root is a boolean."""
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text("true", encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            result = adapter.read_config()
+        assert result == {}
+
+    def test_read_config_logs_warning_for_non_dict(self, tmp_path: Path) -> None:
+        """A warning is emitted when the JSON root is non-dict."""
+        from loguru import logger as loguru_logger
+        messages: list = []
+        sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="WARNING")
+        try:
+            p = tmp_path / "claude_desktop_config.json"
+            p.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+            adapter = self._adapter()
+            with patch.object(adapter, "config_path", return_value=p):
+                adapter.read_config()
+        finally:
+            loguru_logger.remove(sink_id)
+        assert any("non-dict" in str(m) for m in messages)
+
+    def test_read_config_still_works_for_valid_dict(self, tmp_path: Path) -> None:
+        """Sanity check: valid dict JSON is returned unchanged after the guard."""
+        data = {"mcpServers": {"srv": {"command": "python"}}}
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            result = adapter.read_config()
+        assert result == data
+
+    # --- discover_servers with non-dict mcpServers ---
+
+    def test_discover_servers_returns_empty_when_mcpservers_is_list(self, tmp_path: Path) -> None:
+        """discover_servers must return {} when mcpServers is a list instead of a dict."""
+        data = {"mcpServers": [{"name": "server1", "command": "python"}]}
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p), \
+             patch.object(adapter, "_claude_code_paths", return_value=[]):
+            result = adapter.discover_servers()
+        assert result == {}
+
+    def test_discover_servers_returns_empty_when_mcpservers_is_string(self, tmp_path: Path) -> None:
+        """discover_servers must return {} when mcpServers is a string value."""
+        data = {"mcpServers": "invalid"}
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p), \
+             patch.object(adapter, "_claude_code_paths", return_value=[]):
+            result = adapter.discover_servers()
+        assert result == {}
+
+    def test_discover_servers_logs_warning_for_non_dict_mcpservers(
+        self, tmp_path: Path
+    ) -> None:
+        """A warning is logged when mcpServers contains a non-dict value."""
+        from loguru import logger as loguru_logger
+        messages: list = []
+        sink_id = loguru_logger.add(lambda msg: messages.append(msg), level="WARNING")
+        try:
+            data = {"mcpServers": ["not", "a", "dict"]}
+            p = tmp_path / "claude_desktop_config.json"
+            p.write_text(json.dumps(data), encoding="utf-8")
+            adapter = self._adapter()
+            with patch.object(adapter, "config_path", return_value=p), \
+                 patch.object(adapter, "_claude_code_paths", return_value=[]):
+                adapter.discover_servers()
+        finally:
+            loguru_logger.remove(sink_id)
+        assert any("non-dict" in str(m) for m in messages)
+
+    def test_discover_servers_valid_dict_mcpservers_is_returned(self, tmp_path: Path) -> None:
+        """Sanity check: valid dict mcpServers is returned as-is after the guard."""
+        data = {"mcpServers": {"srv1": {"command": "uvx"}}}
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text(json.dumps(data), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p), \
+             patch.object(adapter, "_claude_code_paths", return_value=[]):
+            result = adapter.discover_servers()
+        assert "srv1" in result
+        assert result["srv1"]["command"] == "uvx"
+
+
+# ---------------------------------------------------------------------------
+# New PR: ContinueDevAdapter – non-list mcpServers validation
+# ---------------------------------------------------------------------------
+
+class TestContinueDevNonListValidation:
+    """Tests for the new non-list guard added to ContinueDevAdapter.register_server."""
+
+    def _adapter(self):
+        return get_adapter("continue_dev")
+
+    def test_register_server_when_mcpservers_is_dict(self, tmp_path: Path) -> None:
+        """register_server replaces a corrupt dict mcpServers with a fresh list."""
+        content = yaml.dump({"mcpServers": {"key": "value"}})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("new-server", {"command": "python"})
+        data = yaml.safe_load(p.read_text())
+        assert isinstance(data["mcpServers"], list)
+        assert any(s.get("name") == "new-server" for s in data["mcpServers"])
+
+    def test_register_server_when_mcpservers_is_string(self, tmp_path: Path) -> None:
+        """register_server replaces a corrupt string mcpServers with a fresh list."""
+        content = yaml.dump({"mcpServers": "not-a-list"})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("srv", {"command": "node"})
+        data = yaml.safe_load(p.read_text())
+        assert isinstance(data["mcpServers"], list)
+        names = [s["name"] for s in data["mcpServers"] if isinstance(s, dict)]
+        assert "srv" in names
+
+    def test_register_server_when_mcpservers_is_integer(self, tmp_path: Path) -> None:
+        """register_server replaces a corrupt integer mcpServers with a fresh list."""
+        content = yaml.dump({"mcpServers": 42})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("int-test", {"command": "python"})
+        data = yaml.safe_load(p.read_text())
+        assert isinstance(data["mcpServers"], list)
+        assert any(s.get("name") == "int-test" for s in data["mcpServers"])
+
+    def test_register_server_when_mcpservers_absent(self, tmp_path: Path) -> None:
+        """register_server creates the mcpServers list from scratch when key is missing."""
+        p = tmp_path / "config.yaml"
+        p.write_text(yaml.dump({"other_key": True}), encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("brand-new", {"command": "uvx"})
+        data = yaml.safe_load(p.read_text())
+        assert isinstance(data["mcpServers"], list)
+        assert any(s.get("name") == "brand-new" for s in data["mcpServers"])
+
+    def test_register_server_non_list_does_not_keep_old_corrupt_data(
+        self, tmp_path: Path
+    ) -> None:
+        """After coercion the old corrupt value is not present in the output list."""
+        content = yaml.dump({"mcpServers": {"corrupt": "data"}})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("clean-server", {"command": "python"})
+        data = yaml.safe_load(p.read_text())
+        # The list should only contain our new entry, not the old corrupt dict structure
+        for entry in data["mcpServers"]:
+            assert isinstance(entry, dict)
+            assert "corrupt" not in entry
+
+    def test_register_server_valid_list_behaviour_unchanged(self, tmp_path: Path) -> None:
+        """Regression: register_server with a valid list mcpServers still works correctly."""
+        content = yaml.dump({"mcpServers": [{"name": "existing", "command": "old"}]})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("existing", {"command": "new"})
+        data = yaml.safe_load(p.read_text())
+        names = [s["name"] for s in data["mcpServers"] if isinstance(s, dict)]
+        assert names.count("existing") == 1
+        updated = next(s for s in data["mcpServers"] if s.get("name") == "existing")
+        assert updated["command"] == "new"
+
+
+# ---------------------------------------------------------------------------
+# New PR: MultiMCPConfig backup_dir tilde expansion (_expand_backup_dir validator)
+# ---------------------------------------------------------------------------
+
+class TestMultiMCPConfigBackupDirExpansion:
+    """Tests for the new _expand_backup_dir field_validator on MultiMCPConfig."""
+
+    def test_tilde_in_backup_dir_is_expanded(self) -> None:
+        """~ at the start of backup_dir is expanded to the user's home directory."""
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig(backup_dir="~/my-backups")
+        home = str(Path.home())
+        assert cfg.backup_dir is not None
+        assert cfg.backup_dir.startswith(home)
+        assert "~" not in cfg.backup_dir
+
+    def test_tilde_slash_path_expanded_correctly(self) -> None:
+        """~/.config/backups is expanded to an absolute path."""
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig(backup_dir="~/.config/backups")
+        assert cfg.backup_dir is not None
+        assert cfg.backup_dir == str(Path("~/.config/backups").expanduser())
+        assert not cfg.backup_dir.startswith("~")
+
+    def test_absolute_path_unchanged(self) -> None:
+        """An absolute path is stored as-is (no expansion needed)."""
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig(backup_dir="/absolute/path/backups")
+        assert cfg.backup_dir == "/absolute/path/backups"
+
+    def test_none_backup_dir_stays_none(self) -> None:
+        """None is passed through without modification."""
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig(backup_dir=None)
+        assert cfg.backup_dir is None
+
+    def test_backup_dir_default_is_none(self) -> None:
+        """When backup_dir is not specified, it defaults to None."""
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig()
+        assert cfg.backup_dir is None
+
+    def test_tilde_expansion_loaded_from_yaml(self, tmp_path: Path) -> None:
+        """Tilde expansion fires when the config is loaded from a YAML file."""
+        from src.multimcp.yaml_config import load_config
+        content = "backup_dir: ~/backups\n"
+        p = tmp_path / "servers.yaml"
+        p.write_text(content, encoding="utf-8")
+        cfg = load_config(p)
+        assert cfg.backup_dir is not None
+        assert "~" not in cfg.backup_dir
+        assert cfg.backup_dir.startswith(str(Path.home()))
+
+    def test_expanded_backup_dir_survives_round_trip(self, tmp_path: Path) -> None:
+        """backup_dir with ~ is expanded on load and saved as the expanded form."""
+        from src.multimcp.yaml_config import MultiMCPConfig, save_config, load_config
+        cfg = MultiMCPConfig(backup_dir="~/test-backups")
+        p = tmp_path / "servers.yaml"
+        save_config(cfg, p)
+        loaded = load_config(p)
+        assert loaded.backup_dir is not None
+        assert "~" not in loaded.backup_dir
+        assert loaded.backup_dir == str(Path("~/test-backups").expanduser())
+
+
+# ---------------------------------------------------------------------------
+# New PR: load_config / save_config – UTF-8 encoding
+# ---------------------------------------------------------------------------
+
+class TestLoadSaveConfigUTF8:
+    """Tests verifying that load_config and save_config correctly handle UTF-8
+    content (non-ASCII characters), a change introduced in this PR."""
+
+    def test_load_config_reads_utf8_server_name(self, tmp_path: Path) -> None:
+        """load_config can read a YAML file containing non-ASCII server names."""
+        from src.multimcp.yaml_config import load_config
+        content = "servers:\n  sérver-ünïcode:\n    command: python\n"
+        p = tmp_path / "servers.yaml"
+        p.write_bytes(content.encode("utf-8"))
+        cfg = load_config(p)
+        assert "sérver-ünïcode" in cfg.servers
+
+    def test_save_config_writes_utf8_content(self, tmp_path: Path) -> None:
+        """save_config writes YAML with UTF-8 encoding so non-ASCII survives."""
+        from src.multimcp.yaml_config import MultiMCPConfig, ServerConfig, save_config
+        p = tmp_path / "servers.yaml"
+        cfg = MultiMCPConfig(
+            servers={"ünïcödé-server": ServerConfig(command="python")}
+        )
+        save_config(cfg, p)
+        raw = p.read_bytes()
+        text = raw.decode("utf-8")
+        assert "ünïcödé-server" in text
+
+    def test_load_config_and_save_config_utf8_round_trip(self, tmp_path: Path) -> None:
+        """Non-ASCII characters survive a full save → load round-trip."""
+        from src.multimcp.yaml_config import MultiMCPConfig, ServerConfig, save_config, load_config
+        p = tmp_path / "servers.yaml"
+        original = MultiMCPConfig(
+            servers={"srv-ñ": ServerConfig(command="python", args=["ünïcödé.py"])}
+        )
+        save_config(original, p)
+        loaded = load_config(p)
+        assert "srv-ñ" in loaded.servers
+        assert loaded.servers["srv-ñ"].args == ["ünïcödé.py"]
+
+    def test_load_config_invalid_utf8_falls_back_to_empty(self, tmp_path: Path) -> None:
+        """A file with invalid UTF-8 bytes causes load_config to return empty config."""
+        from src.multimcp.yaml_config import load_config
+        p = tmp_path / "servers.yaml"
+        # Write raw bytes that are not valid UTF-8
+        p.write_bytes(b"servers:\n  bad: \xff\xfe\n")
+        cfg = load_config(p)
+        # Should fall back gracefully to empty config rather than crashing
+        assert isinstance(cfg.servers, dict)

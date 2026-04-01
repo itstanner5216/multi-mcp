@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from src.multimcp.yaml_config import load_config, MultiMCPConfig
+
 from src.multimcp.cache_manager import merge_discovered_tools, cleanup_stale_tools
+from src.multimcp.yaml_config import load_config, MultiMCPConfig
 from src.utils.logger import get_logger
 
 logger = get_logger("multi_mcp.cli")

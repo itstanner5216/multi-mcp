@@ -1,21 +1,24 @@
 from __future__ import annotations
+
 from pathlib import Path
 from typing import Literal, Optional
+
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+
 from src.utils.logger import get_logger
 
 logger = get_logger("multi_mcp.config")
 
 
-class ToolEntry(BaseModel):
+class ToolEntry(BaseModel):  # pylint: disable=too-few-public-methods
     enabled: bool = True
     stale: bool = False
     description: str = ""
     input_schema: Optional[dict] = None
 
 
-class ServerConfig(BaseModel):
+class ServerConfig(BaseModel):  # pylint: disable=too-few-public-methods
     command: Optional[str] = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -35,12 +38,12 @@ class RetrievalSettings(BaseModel):
     anchor_tools: list[str] = Field(default_factory=list)
 
 
-class ProfileConfig(BaseModel):
+class ProfileConfig(BaseModel):  # pylint: disable=too-few-public-methods
     """Per-profile tool allow-list. Keys are server names, values are lists of allowed tool names."""
     servers: dict[str, list[str]] = Field(default_factory=dict)
 
 
-class MultiMCPConfig(BaseModel):
+class MultiMCPConfig(BaseModel):  # pylint: disable=too-few-public-methods
     servers: dict[str, ServerConfig] = Field(default_factory=dict)
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     sources: list[str] = Field(default_factory=list)
@@ -60,13 +63,22 @@ class MultiMCPConfig(BaseModel):
         backup_dir: /home/alice/.config/multi-mcp/backups
     """
 
+    @field_validator("backup_dir", mode="before")
+    @classmethod
+    def _expand_backup_dir(cls, v: Optional[str]) -> Optional[str]:
+        """Expand ``~`` in backup_dir so callers get a usable path."""
+        if v is None:
+            return v
+        expanded = Path(v).expanduser()
+        return str(expanded)
+
 
 def load_config(path: Path) -> MultiMCPConfig:
     """Load YAML config from path. Returns empty config if file doesn't exist or is invalid."""
     if not path.exists():
         return MultiMCPConfig()
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         return MultiMCPConfig.model_validate(raw)
     except yaml.YAMLError as e:
@@ -75,7 +87,13 @@ def load_config(path: Path) -> MultiMCPConfig:
     except (ValidationError, TypeError, ValueError) as e:
         logger.error(f"❌ Invalid config schema at {path}: {e}")
         return MultiMCPConfig()
-    except Exception as e:
+    except PermissionError as e:
+        logger.error(f"❌ Permission denied reading config from {path}: {e}")
+        return MultiMCPConfig()
+    except OSError as e:
+        logger.error(f"❌ I/O error reading config from {path}: {e}")
+        return MultiMCPConfig()
+    except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"❌ Unexpected error loading config from {path}: {e}")
         return MultiMCPConfig()
 
@@ -91,7 +109,7 @@ def save_config(config: MultiMCPConfig, path: Path) -> None:
         logger.error(f"❌ Failed to create config directory {path.parent}: {e}")
         raise
     try:
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             yaml.dump(
                 config.model_dump(exclude_none=False),
                 f,
