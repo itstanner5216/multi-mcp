@@ -251,7 +251,7 @@ class MultiMCP:
             if not cfg_path.exists():
                 continue
             try:
-                with open(cfg_path) as f:
+                with open(cfg_path, encoding="utf-8") as f:
                     data = json.load(f)
 
                 # Zed uses "context_servers" with a slightly different shape
@@ -304,7 +304,7 @@ class MultiMCP:
         disabled_plugins: set[str] = set()
         if settings_path.exists():
             try:
-                with open(settings_path) as f:
+                with open(settings_path, encoding="utf-8") as f:
                     settings = json.load(f)
                 for plugin_id, is_enabled in settings.get("enabledPlugins", {}).items():
                     if not is_enabled:
@@ -326,7 +326,7 @@ class MultiMCP:
                 if plugin_id in disabled_plugins:
                     continue
             try:
-                with open(mcp_json) as f:
+                with open(mcp_json, encoding="utf-8") as f:
                     data = json.load(f)
                 extracted = self._extract_mcp_servers(data)
                 if extracted:
@@ -456,6 +456,13 @@ class MultiMCP:
             )
             if server_config.always_on:
                 self.client_manager.always_on_servers.add(server_name)
+        # Parse retrieval settings from JSON if present.
+        if "retrieval" in json_data:
+            from src.multimcp.yaml_config import RetrievalSettings
+            try:
+                config.retrieval = RetrievalSettings(**json_data["retrieval"])
+            except Exception as e:
+                self.logger.warning(f"⚠️ Failed to parse retrieval settings from JSON config: {e}")
         self.logger.info(
             f"📄 Using JSON config: {self.settings.config} "
             f"({len(config.servers)} server(s): {', '.join(config.servers)})"
@@ -541,6 +548,8 @@ class MultiMCP:
             # (enabled=False, shadow_mode=False) — preserving full backward compatibility.
             from src.multimcp.retrieval.pipeline import RetrievalPipeline
             from src.multimcp.retrieval.bmx_retriever import BMXFRetriever
+            from src.multimcp.retrieval.keyword import KeywordRetriever
+            from src.multimcp.retrieval.base import PassthroughRetriever
             from src.multimcp.retrieval.logging import NullLogger, FileRetrievalLogger
             from src.multimcp.retrieval.session import SessionStateManager
             from src.multimcp.retrieval.models import RetrievalConfig
@@ -563,14 +572,23 @@ class MultiMCP:
                 rollout_stage=yaml_retrieval.rollout_stage,
             )
 
-            bmxf_retriever = BMXFRetriever(config=retrieval_config)
-            self.bmxf_retriever = bmxf_retriever
+            if retrieval_config.scorer == "bmxf":
+                retriever = BMXFRetriever(config=retrieval_config)
+                self.bmxf_retriever = retriever
+            elif retrieval_config.scorer == "keyword":
+                retriever = KeywordRetriever(config=retrieval_config)
+                self.bmxf_retriever = None
+            else:
+                retriever = PassthroughRetriever()
+                self.bmxf_retriever = None
 
             # Build the initial index from whatever tools are already registered.
             # rebuild_catalog() is called again after always_on servers connect so
-            # the index stays in sync. Called here to populate _env_index / _nl_index.
+            # the index stays in sync. Called here when the active retriever supports it.
             if self.proxy.tool_to_server:
-                bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+                rebuild = getattr(retriever, "rebuild_index", None)
+                if rebuild is not None:
+                    rebuild(self.proxy.tool_to_server)
 
             # Wire TelemetryScanner so workspace roots drive env-query tokens.
             telemetry_scanner = None
@@ -597,7 +615,7 @@ class MultiMCP:
             rolling_metrics = RollingMetrics(window_seconds=1800) if retrieval_config.enabled else None
 
             self.proxy.retrieval_pipeline = RetrievalPipeline(
-                retriever=bmxf_retriever,
+                retriever=retriever,
                 session_manager=SessionStateManager(retrieval_config),
                 logger=retrieval_logger,
                 config=retrieval_config,
@@ -624,7 +642,10 @@ class MultiMCP:
                 # Rebuild the retrieval index with the freshly discovered tools so the
                 # pipeline catalog is populated before the first tools/list request.
                 if self.proxy.tool_to_server:
-                    bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+                    active_retriever = self.proxy.retrieval_pipeline.retriever
+                    rebuild = getattr(active_retriever, "rebuild_index", None)
+                    if rebuild is not None:
+                        rebuild(self.proxy.tool_to_server)
                     self.proxy.retrieval_pipeline.rebuild_catalog(self.proxy.tool_to_server)
 
             # Register watchdog callback so proxy tool mappings are refreshed after reconnect
@@ -905,9 +926,12 @@ class MultiMCP:
                 )
                 for name, client in new_clients.items():
                     await self.proxy.register_client(name, client)
-                # Issue E: rebuild BMXF index after dynamic server add
-                if self.bmxf_retriever is not None and self.proxy.tool_to_server:
-                    self.bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+                # Rebuild the active retriever index after dynamic server add when supported.
+                if self.proxy.retrieval_pipeline is not None and self.proxy.tool_to_server:
+                    active_retriever = self.proxy.retrieval_pipeline.retriever
+                    rebuild = getattr(active_retriever, "rebuild_index", None)
+                    if rebuild is not None:
+                        rebuild(self.proxy.tool_to_server)
                 return JSONResponse({"message": f"Added {list(new_clients.keys())}"})
             except ValueError as e:
                 # Security validation failure (command not allowed, SSRF attempt, etc.)
@@ -934,9 +958,12 @@ class MultiMCP:
 
             try:
                 await self.proxy.unregister_client(name)
-                # Issue E: rebuild BMXF index after dynamic server remove
-                if self.bmxf_retriever is not None and self.proxy.tool_to_server:
-                    self.bmxf_retriever.rebuild_index(self.proxy.tool_to_server)
+                # Rebuild the active retriever index after dynamic server remove when supported.
+                if self.proxy.retrieval_pipeline is not None and self.proxy.tool_to_server:
+                    active_retriever = self.proxy.retrieval_pipeline.retriever
+                    rebuild = getattr(active_retriever, "rebuild_index", None)
+                    if rebuild is not None:
+                        rebuild(self.proxy.tool_to_server)
                 return JSONResponse(
                     {"message": f"Client '{name}' removed successfully"}
                 )
