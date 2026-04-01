@@ -1,6 +1,7 @@
 """Adapter registry for all supported MCP config adapters."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Type
 
 from src.multimcp.adapters.base import MCPConfigAdapter
@@ -48,8 +49,8 @@ _ALL_ADAPTER_CLASSES: List[Type[MCPConfigAdapter]] = sorted(
 class AdapterRegistry:
     """Registry that provides access to all built-in MCP config adapters."""
 
-from pathlib import Path
-from typing import Dict, List, Optional, Type
+    def __init__(self, backup_dir: Optional[Path] = None):
+        """Initialize the registry with all available adapters."""
         self._adapters: Dict[str, MCPConfigAdapter] = {}
         for cls in _ALL_ADAPTER_CLASSES:
             adapter = cls()

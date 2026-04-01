@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -47,12 +48,30 @@ class OpenCodeAdapter(MCPConfigAdapter):
             return project
         return self._user_config_path()
 
+    def _strip_jsonc_comments(self, content: str) -> str:
+        """Strip single-line and multi-line comments from JSONC content."""
+        # Remove single-line comments (// ...)
+        content = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+        # Remove multi-line comments (/* ... */)
+        content = re.sub(r'/\*.*?\*/', '', content, flags=re.DOTALL)
+        # Remove trailing commas before closing braces/brackets
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
+        return content
+
     def read_config(self) -> Dict:
-        """Read OpenCode's config, returning {} if absent."""
+        """Read OpenCode's config, returning {} if absent.
+
+        Supports both JSON and JSONC formats (strips comments and trailing commas
+        for .jsonc files or when JSONC markers are detected).
+        """
         path = self.config_path()
         if path is None or not path.exists():
             return {}
-        return json.loads(path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8")
+        # Detect JSONC by file extension or content markers
+        if path.suffix == ".jsonc" or "//" in content or "/*" in content:
+            content = self._strip_jsonc_comments(content)
+        return json.loads(content)
 
     def write_config(self, data: Dict) -> None:
         """Write *data* to OpenCode's config file."""

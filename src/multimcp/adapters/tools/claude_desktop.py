@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from src.multimcp.adapters.base import MCPConfigAdapter
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ClaudeDesktopAdapter(MCPConfigAdapter):
@@ -82,7 +85,11 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
         self.write_config(data)
 
     def discover_servers(self) -> Dict[str, Dict]:
-        """Return all MCP servers registered in Claude Desktop and Claude Code configs."""
+        """Return all MCP servers registered in Claude Desktop and Claude Code configs.
+
+        Note: Claude Code entries take precedence over Claude Desktop entries with the
+        same name. Any overwrites are logged for visibility.
+        """
         result: Dict[str, Dict] = self.read_config().get("mcpServers", {})
         # Also check Claude Code config files
         for path in self._claude_code_paths():
@@ -93,7 +100,20 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
                 if isinstance(data, dict):
                     mcp_servers = data.get("mcpServers")
                     if isinstance(mcp_servers, dict):
-                        result.update(mcp_servers)
-            except (json.JSONDecodeError, OSError):
-                pass
+                        # Handle key collisions explicitly
+                        for server_name, server_config in mcp_servers.items():
+                            if server_name in result:
+                                logger.warning(
+                                    f"Server '{server_name}' from Claude Code config ({path}) "
+                                    f"overwrites entry from Claude Desktop config"
+                                )
+                            result[server_name] = server_config
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"Failed to parse Claude Code config at {path}: {e}"
+                )
+            except OSError as e:
+                logger.error(
+                    f"Failed to read Claude Code config at {path}: {e}"
+                )
         return result

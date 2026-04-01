@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from src.multimcp.adapters.base import MCPConfigAdapter
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class JetBrainsAdapter(MCPConfigAdapter):
@@ -41,8 +44,12 @@ class JetBrainsAdapter(MCPConfigAdapter):
             return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JetBrains config at {path}: {e}")
+            raise
+        except OSError as e:
+            logger.error(f"Failed to read JetBrains config at {path}: {e}")
+            raise
         if not isinstance(data, dict):
             return {}
         return data

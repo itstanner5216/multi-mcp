@@ -27,13 +27,23 @@ class ZedAdapter(MCPConfigAdapter):
     config_format = "json"
     supported_platforms = ["macos", "linux", "windows"]
 
+    def _get_appdata_path(self) -> Path:
+        """Get the Windows AppData Roaming path.
+
+        Prefers APPDATA environment variable, falls back to standard location
+        under user home directory.
+        """
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata)
+        return Path.home() / "AppData" / "Roaming"
+
     def config_path(self) -> Optional[Path]:
         """Return the platform-specific path to Zed's settings.json."""
         if sys.platform == "darwin":
             base = Path.home() / ".zed"
         elif sys.platform == "win32":
-            appdata = os.environ.get("APPDATA")
-            base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+            base = self._get_appdata_path()
             return base / "Zed" / "settings.json"
         else:
             base = Path.home() / ".config" / "zed"

@@ -61,7 +61,9 @@ class ContinueDevAdapter(MCPConfigAdapter):
         servers: List[Any] = data.setdefault("mcpServers", [])
         # Remove any existing entry with the same name
         servers = [s for s in servers if not (isinstance(s, dict) and s.get("name") == name)]
-        servers.append({"name": name, **config})
+        # Ensure the method argument wins by merging config first, then overriding name
+        entry = {**config, "name": name}
+        servers.append(entry)
         data["mcpServers"] = servers
         self.write_config(data)
 
