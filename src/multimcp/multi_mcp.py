@@ -461,8 +461,12 @@ class MultiMCP:
             from src.multimcp.yaml_config import RetrievalSettings
             try:
                 config.retrieval = RetrievalSettings(**json_data["retrieval"])
-            except Exception as e:
-                self.logger.warning(f"⚠️ Failed to parse retrieval settings from JSON config: {e}")
+            except ValidationError as e:
+                self.logger.error(
+                    "Failed to parse retrieval settings from JSON config; "
+                    "please fix the 'retrieval' section and try again."
+                )
+                raise RuntimeError("Invalid retrieval settings in JSON config") from e
         self.logger.info(
             f"📄 Using JSON config: {self.settings.config} "
             f"({len(config.servers)} server(s): {', '.join(config.servers)})"
