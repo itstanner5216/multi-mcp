@@ -7,7 +7,7 @@ This test verifies that the actual runtime dispatch works — the routing tool n
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -30,39 +30,43 @@ class TestRequestToolCallable:
 
     @pytest.mark.anyio
     async def test_request_tool_callable(self):
-        """Calling tool_name == ROUTING_TOOL_KEY dispatches to handle_routing_call().
+        """Calling tool_name == ROUTING_TOOL_NAME dispatches to handle_routing_call().
 
         This replaces V-02 grep-based verification with a runtime behavioral test.
         The test patches handle_routing_call so we can confirm it's actually called.
         """
-        from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_KEY
+        from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_NAME
 
-        # Build a minimal MCPProxyServer
+        # Build a minimal MCPProxyServer with just the state _call_tool needs
         from src.multimcp.mcp_proxy import MCPProxyServer
 
         proxy = MCPProxyServer.__new__(MCPProxyServer)
         proxy.tool_to_server = {}
         proxy.retrieval_pipeline = None
-        proxy._session_id_store = {}
 
-        # Patch handle_routing_call at the module level so the dispatch call is captured
+        # Patch handle_routing_call at the source module so the lazy import in _call_tool gets it
+        # (handle_routing_call is synchronous, so MagicMock is correct here)
         with patch(
             "src.multimcp.retrieval.routing_tool.handle_routing_call",
-            new=AsyncMock(return_value=MagicMock()),
+            return_value=[types.TextContent(type="text", text="describe result")],
         ) as mock_handle:
-            # Simulate the _call_tool dispatch path for ROUTING_TOOL_KEY
-            # We replicate the exact early-return guard from mcp_proxy._call_tool
-            from src.multimcp.retrieval.routing_tool import ROUTING_TOOL_KEY, handle_routing_call
+            req = types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name=ROUTING_TOOL_NAME,
+                    arguments={"name": "some_tool", "describe": True},
+                ),
+            )
+            # Call through the actual dispatch path
+            await proxy._call_tool(req)
 
-            if ROUTING_TOOL_KEY:  # matches the lazy import guard
-                # Invoke via the routing key — this is the production path
-                result = await handle_routing_call(
-                    routing_args={"name": "some_tool"},
-                    tool_registry=proxy.tool_to_server,
-                    pipeline=proxy.retrieval_pipeline,
-                    session_id="test-session",
-                )
-                mock_handle.assert_called_once()
+            # Verify handle_routing_call was invoked with the correct signature
+            mock_handle.assert_called_once_with(
+                "some_tool",        # name
+                True,               # describe
+                {},                 # arguments (call_args)
+                proxy.tool_to_server,  # tool_to_server
+            )
 
     def test_handle_routing_call_importable_and_callable(self):
         """handle_routing_call is importable and is a callable function."""

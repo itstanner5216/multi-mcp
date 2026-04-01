@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,8 +25,17 @@ from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
 REPO_ROOT = Path(__file__).parent.parent
-SCENARIO_A_PORT = 8086
-SCENARIO_B_PORT = 8087
+
+
+def _find_free_port() -> int:
+    """Find a free ephemeral port by binding to port 0."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+SCENARIO_A_PORT = _find_free_port()
+SCENARIO_B_PORT = _find_free_port()
 CONFIG_A = str(REPO_ROOT / "examples" / "config" / "mcp.json")
 RETRIEVAL_HELPER = str(REPO_ROOT / "tests" / "tools" / "retrieval_server.py")
 
@@ -91,6 +101,7 @@ def scenario_a_proc():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait()
 
 
 @pytest.fixture(scope="module")
@@ -107,7 +118,7 @@ async def scenario_a(scenario_a_proc):
 class TestScenarioA:
     """Real server add/remove, tool discovery, tool execution via live SSE proxy."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a1_health_endpoint(self, scenario_a):
         """Server /health returns 200 with status information."""
         async with httpx.AsyncClient() as client:
@@ -118,7 +129,7 @@ class TestScenarioA:
             f"Unexpected health status: {body}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a2_initial_servers_listed(self, scenario_a):
         """GET /mcp_servers lists the initially configured servers."""
         async with httpx.AsyncClient() as client:
@@ -132,7 +143,7 @@ class TestScenarioA:
             f"Expected 'calculator' in servers, got: {body}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a3_tool_discovery_via_http(self, scenario_a):
         """GET /mcp_tools returns calculator tools by server."""
         async with httpx.AsyncClient() as client:
@@ -146,7 +157,7 @@ class TestScenarioA:
         assert "add" in calc_tools, f"Expected 'add' in calculator tools: {calc_tools}"
         assert "multiply" in calc_tools, f"Expected 'multiply' in calculator tools: {calc_tools}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a4_tool_execution_via_sse(self, scenario_a):
         """Call calculator__add through a real SSE session and verify the result."""
         result = await _mcp_call_tool(scenario_a, "calculator__add", {"a": 11, "b": 22})
@@ -154,7 +165,7 @@ class TestScenarioA:
         output = result.content[0].text if result.content else ""
         assert "33" in str(output), f"Expected 33 in result, got: {output!r}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a5_tool_list_via_sse(self, scenario_a):
         """tools/list over SSE returns namespaced calculator tools."""
         tools = await _mcp_list_tools(scenario_a)
@@ -162,13 +173,13 @@ class TestScenarioA:
         assert "calculator__add" in names, f"Expected calculator__add in: {names}"
         assert "calculator__multiply" in names, f"Expected calculator__multiply in: {names}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a6_dynamic_server_add(self, scenario_a):
         """POST /mcp_servers adds unit_convertor; its tools appear in /mcp_tools."""
         payload = {
             "mcpServers": {
                 "unit_convertor": {
-                    "command": "python",
+                    "command": sys.executable,
                     "args": ["./tests/tools/unit_convertor.py"],
                 }
             }
@@ -193,7 +204,7 @@ class TestScenarioA:
             f"Expected 'unit_convertor' in tools after add, got: {list(tools.keys())}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a7_added_tools_executable_via_sse(self, scenario_a):
         """After dynamic add, unit_convertor__convert_length is callable over SSE."""
         result = await _mcp_call_tool(
@@ -206,7 +217,7 @@ class TestScenarioA:
         # 1 km ≈ 0.621371 miles
         assert "0.621" in str(output), f"Expected ~0.621 in result, got: {output!r}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_a8_dynamic_server_remove(self, scenario_a):
         """DELETE /mcp_servers/unit_convertor removes it; its tools disappear."""
         async with httpx.AsyncClient() as client:
@@ -276,6 +287,7 @@ def scenario_b_proc():
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait()
     Path(json_path).unlink(missing_ok=True)
 
 
@@ -285,7 +297,7 @@ async def scenario_b(scenario_b_proc):
     ready = await _wait_for_health(SCENARIO_B_PORT, timeout=20.0)
     assert ready, (
         f"Scenario B server on port {SCENARIO_B_PORT} did not become healthy within 20s. "
-        f"stderr: {scenario_b_proc.stderr.read1(4096).decode(errors='replace') if scenario_b_proc.stderr else ''}"
+        f"stderr: {(await asyncio.to_thread(scenario_b_proc.stderr.read, 4096)).decode(errors='replace') if scenario_b_proc.stderr else ''}"
     )
     # Give the always_on calculator server time to connect and register tools
     await asyncio.sleep(4.0)
@@ -295,7 +307,7 @@ async def scenario_b(scenario_b_proc):
 class TestScenarioB:
     """Real bounded-set exposure and live request_tool proxy execution."""
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_b1_tool_list_bounded_to_max_k(self, scenario_b):
         """With retrieval enabled + GA + max_k=1, tools/list returns ≤2 tools (direct + request_tool)."""
         tools = await _mcp_list_tools(scenario_b)
@@ -309,7 +321,7 @@ class TestScenarioB:
             f"Expected ≤2 total tools (direct + request_tool), got {len(tools)}: {names}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_b2_request_tool_present(self, scenario_b):
         """request_tool is present in the tool list when demoted tools exist."""
         tools = await _mcp_list_tools(scenario_b)
@@ -318,7 +330,7 @@ class TestScenarioB:
             f"Expected 'request_tool' in tool list (demoted tools should exist): {names}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_b3_request_tool_enum_contains_demoted_tool(self, scenario_b):
         """request_tool inputSchema enum lists the demoted calculator tool."""
         tools = await _mcp_list_tools(scenario_b)
@@ -336,7 +348,7 @@ class TestScenarioB:
             f"Expected a calculator tool in request_tool enum: {name_enum}"
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_b4_request_tool_describe_returns_schema(self, scenario_b):
         """Calling request_tool with describe=True returns the demoted tool's JSON schema."""
         tools = await _mcp_list_tools(scenario_b)
@@ -361,7 +373,7 @@ class TestScenarioB:
         assert "name" in schema_data, f"Schema must have 'name' field: {schema_data}"
         assert "inputSchema" in schema_data, f"Schema must have 'inputSchema': {schema_data}"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_b5_request_tool_proxy_executes_demoted_tool(self, scenario_b):
         """Calling request_tool with describe=False proxies through to the actual tool."""
         tools = await _mcp_list_tools(scenario_b)
