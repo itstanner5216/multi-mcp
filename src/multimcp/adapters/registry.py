@@ -48,7 +48,8 @@ _ALL_ADAPTER_CLASSES: List[Type[MCPConfigAdapter]] = sorted(
 class AdapterRegistry:
     """Registry that provides access to all built-in MCP config adapters."""
 
-    def __init__(self, backup_dir: Optional[Path] = None) -> None:
+from pathlib import Path
+from typing import Dict, List, Optional, Type
         self._adapters: Dict[str, MCPConfigAdapter] = {}
         for cls in _ALL_ADAPTER_CLASSES:
             adapter = cls()
