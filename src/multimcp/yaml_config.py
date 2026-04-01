@@ -87,6 +87,12 @@ def load_config(path: Path) -> MultiMCPConfig:
     except (ValidationError, TypeError, ValueError) as e:
         logger.error(f"❌ Invalid config schema at {path}: {e}")
         return MultiMCPConfig()
+    except PermissionError as e:
+        logger.error(f"❌ Permission denied reading config from {path}: {e}")
+        return MultiMCPConfig()
+    except OSError as e:
+        logger.error(f"❌ I/O error reading config from {path}: {e}")
+        return MultiMCPConfig()
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"❌ Unexpected error loading config from {path}: {e}")
         return MultiMCPConfig()

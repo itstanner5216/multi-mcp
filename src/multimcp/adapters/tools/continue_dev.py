@@ -9,6 +9,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from src.multimcp.adapters.base import MCPConfigAdapter
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ContinueDevAdapter(MCPConfigAdapter):
@@ -60,6 +63,9 @@ class ContinueDevAdapter(MCPConfigAdapter):
         data = self.read_config()
         existing = data.get("mcpServers", [])
         if not isinstance(existing, list):
+            logger.warning(
+                f"mcpServers key contains non-list value ({type(existing).__name__}), replacing with empty list"
+            )
             existing = []
         servers: List[Any] = existing
         # Remove any existing entry with the same name
@@ -73,6 +79,11 @@ class ContinueDevAdapter(MCPConfigAdapter):
     def discover_servers(self) -> Dict[str, Dict]:
         """Return a name→config mapping from the ``mcpServers`` list."""
         servers_list = self.read_config().get("mcpServers", [])
+        if not isinstance(servers_list, list):
+            logger.warning(
+                f"mcpServers key contains non-list value ({type(servers_list).__name__}), treating as empty"
+            )
+            servers_list = []
         return {
             s["name"]: {k: v for k, v in s.items() if k != "name"}
             for s in servers_list

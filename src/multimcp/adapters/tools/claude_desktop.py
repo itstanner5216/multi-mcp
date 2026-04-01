@@ -91,7 +91,14 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
     def register_server(self, name: str, config: Dict) -> None:
         """Add or update an MCP server entry in the Claude Desktop config."""
         data = self.read_config()
-        data.setdefault("mcpServers", {})[name] = config
+        existing_mcp = data.get("mcpServers", {})
+        if not isinstance(existing_mcp, dict):
+            logger.warning(
+                f"mcpServers key contains non-dict value ({type(existing_mcp).__name__}), replacing with empty dict"
+            )
+            existing_mcp = {}
+        existing_mcp[name] = config
+        data["mcpServers"] = existing_mcp
         self.write_config(data)
 
     def discover_servers(self) -> Dict[str, Dict]:
@@ -105,7 +112,8 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
             logger.warning(
                 f"mcpServers key contains non-dict value ({type(raw_mcp).__name__}), using empty dict"
             )
-        result: Dict[str, Dict] = raw_mcp if isinstance(raw_mcp, dict) else {}
+            raw_mcp = {}
+        result: Dict[str, Dict] = raw_mcp
         # Also check Claude Code config files
         for path in self._claude_code_paths():
             if not path.exists():
