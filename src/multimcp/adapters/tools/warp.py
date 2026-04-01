@@ -43,8 +43,9 @@ class WarpAdapter(MCPConfigAdapter):
                 / "mcp"
             )
         if sys.platform == "win32":
-            local = os.environ.get("LOCALAPPDATA", "")
-            return Path(local) / "warp" / "Warp" / "data" / "mcp"
+            local = os.environ.get("LOCALAPPDATA")
+            base = Path(local) if local else Path.home() / "AppData" / "Local"
+            return base / "warp" / "Warp" / "data" / "mcp"
         return Path.home() / ".config" / "warp-terminal" / "mcp_servers.json"
 
     def _is_dir_mode(self) -> bool:

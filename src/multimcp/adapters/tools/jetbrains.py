@@ -28,7 +28,8 @@ class JetBrainsAdapter(MCPConfigAdapter):
     def config_path(self) -> Optional[Path]:
         """Return the path to the JetBrains Junie MCP config file."""
         if sys.platform == "win32":
-            base = Path(os.environ.get("USERPROFILE", Path.home()))
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
         else:
             base = Path.home()
         return base / ".junie" / "mcp" / "mcp.json"

@@ -25,7 +25,8 @@ class GitHubCopilotAdapter(MCPConfigAdapter):
     def config_path(self) -> Optional[Path]:
         """Return the path to GitHub Copilot CLI's MCP config file."""
         if sys.platform == "win32":
-            base = Path(os.environ.get("USERPROFILE", Path.home()))
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
         else:
             base = Path.home()
         return base / ".copilot" / "mcp-config.json"

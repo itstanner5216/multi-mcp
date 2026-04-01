@@ -32,8 +32,8 @@ class OpenCodeAdapter(MCPConfigAdapter):
     def _user_config_path(self) -> Path:
         """Return the user-level OpenCode config path."""
         if sys.platform == "win32":
-            appdata = os.environ.get("APPDATA", "")
-            return Path(appdata) / "opencode" / "opencode.jsonc"
+            appdata = os.environ.get("APPDATA")
+            return Path(appdata) / "opencode" / "opencode.jsonc" if appdata else Path.home() / "AppData" / "Roaming" / "opencode" / "opencode.jsonc"
         return Path.home() / ".config" / "opencode" / "opencode.json"
 
     def config_path(self) -> Optional[Path]:

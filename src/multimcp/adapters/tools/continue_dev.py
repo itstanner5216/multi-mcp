@@ -31,7 +31,8 @@ class ContinueDevAdapter(MCPConfigAdapter):
     def config_path(self) -> Optional[Path]:
         """Return the path to Continue's config.yaml."""
         if sys.platform == "win32":
-            base = Path(os.environ.get("USERPROFILE", Path.home()))
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
         else:
             base = Path.home()
         return base / ".continue" / "config.yaml"

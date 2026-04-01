@@ -52,8 +52,9 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
     def _claude_code_paths(self) -> List[Path]:
         """Return candidate Claude Code config paths for the current platform."""
         if sys.platform == "win32":
-            userprofile = os.environ.get("USERPROFILE", "")
-            return [Path(userprofile) / ".claude.json"]
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
+            return [base / ".claude.json"]
         return [
             Path.home() / ".claude.json",
             Path.home() / ".claude" / "settings.json",

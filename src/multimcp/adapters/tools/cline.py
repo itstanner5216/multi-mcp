@@ -37,7 +37,8 @@ class ClineAdapter(MCPConfigAdapter):
         if sys.platform == "darwin":
             base = Path.home() / "Library" / "Application Support"
         elif sys.platform == "win32":
-            base = Path(os.environ.get("APPDATA", ""))
+            appdata = os.environ.get("APPDATA")
+            base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
         else:
             base = Path.home() / ".config"
         return base / "Code" / "User" / "globalStorage" / _EXTENSION_STORAGE / _SETTINGS_RELATIVE

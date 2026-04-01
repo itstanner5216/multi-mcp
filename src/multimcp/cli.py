@@ -139,7 +139,8 @@ def cmd_install(
     # Propagate backup_dir from YAML config into the adapter registry so that
     # every write_config call creates a .bak before overwriting.
     yaml_config = load_config(yaml_path)
-    backup_dir = Path(yaml_config.backup_dir) if yaml_config.backup_dir else None
+    _raw_backup_dir = yaml_config.backup_dir
+    backup_dir = Path(_raw_backup_dir) if _raw_backup_dir and _raw_backup_dir.strip() else None
     configure_registry(backup_dir=backup_dir)
 
     effective_name = server_name if server_name is not None else _DEFAULT_SERVER_NAME

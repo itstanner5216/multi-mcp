@@ -1011,14 +1011,13 @@ class TestBackupMechanism:
         """Calling write_config on an existing file creates the .bak first."""
         p = tmp_path / "claude_desktop_config.json"
         original = {"mcpServers": {"old": {"command": "old"}}}
-        p.write_text(__import__("json").dumps(original), encoding="utf-8")
+        p.write_text(json.dumps(original), encoding="utf-8")
         adapter = self._adapter()
         adapter.backup_dir = None
         with patch.object(adapter, "config_path", return_value=p):
             adapter.write_config({"mcpServers": {"new": {"command": "new"}}})
         bak = tmp_path / "claude_desktop_config.json.bak"
         assert bak.exists()
-        import json
         assert json.loads(bak.read_text())["mcpServers"]["old"]["command"] == "old"
 
     def test_registry_propagates_backup_dir_to_adapters(self, tmp_path: Path) -> None:

@@ -30,11 +30,14 @@ class ZedAdapter(MCPConfigAdapter):
     def config_path(self) -> Optional[Path]:
         """Return the platform-specific path to Zed's settings.json."""
         if sys.platform == "darwin":
-            return Path.home() / ".zed" / "settings.json"
-        if sys.platform == "win32":
-            appdata = os.environ.get("APPDATA", "")
-            return Path(appdata) / "Zed" / "settings.json"
-        return Path.home() / ".config" / "zed" / "settings.json"
+            base = Path.home() / ".zed"
+        elif sys.platform == "win32":
+            appdata = os.environ.get("APPDATA")
+            base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+            return base / "Zed" / "settings.json"
+        else:
+            base = Path.home() / ".config" / "zed"
+        return base / "settings.json"
 
     def read_config(self) -> Dict:
         """Read Zed's settings.json, returning {} if absent."""
