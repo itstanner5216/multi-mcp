@@ -42,7 +42,7 @@ class RetrievalSettings(BaseModel):
     telemetry_poll_interval: int = Field(default=30, ge=5)
     # Phase 4 rollout fields
     canary_percentage: float = Field(default=0.0, ge=0.0, le=100.0)
-    rollout_stage: str = "shadow"
+    rollout_stage: Literal["shadow", "canary", "ga"] = "shadow"
     # Logging
     log_path: str = ""
 
