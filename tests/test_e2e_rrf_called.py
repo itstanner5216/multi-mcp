@@ -45,14 +45,7 @@ class MockBMXFRetriever(ToolRetriever):
         self._nl_index = object()
 
     async def retrieve(self, context: RetrievalContext, candidates) -> list[ScoredTool]:
-        return [
-            ScoredTool(tool_key=key, tool_mapping=tm, score=float(len(candidates) - i))
-            for i, (key, tm) in enumerate(
-                list({k: c for k, c in candidates[0].tool_registry.items()}.items())[:5]
-                if hasattr(candidates[0], "tool_registry")
-                else enumerate([])
-            )
-        ] if False else []
+        return []
 
     async def retrieve_for(self, context, candidates) -> list[ScoredTool]:
         return [

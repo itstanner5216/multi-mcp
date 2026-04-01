@@ -99,7 +99,7 @@ async def scenario_a(scenario_a_proc):
     ready = await _wait_for_health(SCENARIO_A_PORT, timeout=20.0)
     assert ready, (
         f"Scenario A server on port {SCENARIO_A_PORT} did not become healthy within 20s. "
-        f"stderr: {scenario_a_proc.stderr.read1(4096).decode(errors='replace') if scenario_a_proc.stderr else ''}"
+        "Check the subprocess logs for details."
     )
     return SCENARIO_A_PORT
 

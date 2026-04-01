@@ -275,7 +275,6 @@ class TestConfigDrivenPipelineInit:
         [
             ("bmxf", "bmxf"),
             ("keyword", "keyword"),
-            ("unknown-scorer", "passthrough"),
         ],
     )
     async def test_run_selects_retriever_from_yaml_scorer(
@@ -292,6 +291,13 @@ class TestConfigDrivenPipelineInit:
         pipeline_kwargs = capture.pipeline_kwargs
         assert pipeline_kwargs is not None
         assert pipeline_kwargs["retriever"].kind == expected_retriever_kind
+
+    def test_invalid_scorer_raises_validation_error(self) -> None:
+        """An unrecognised scorer value is rejected at config parse time."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="scorer"):
+            RetrievalSettings(enabled=True, scorer="unknown-scorer")
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

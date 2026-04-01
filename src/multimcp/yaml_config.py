@@ -35,7 +35,7 @@ class RetrievalSettings(BaseModel):
     anchor_tools: list[str] = Field(default_factory=list)
     # Phase 2 fields
     shadow_mode: bool = False
-    scorer: str = "bmxf"
+    scorer: Literal["bmxf", "keyword"] = "bmxf"
     max_k: int = Field(default=20, ge=1, le=20)
     enable_routing_tool: bool = True
     enable_telemetry: bool = True
