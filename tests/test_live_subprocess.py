@@ -92,8 +92,6 @@ def scenario_a_proc():
             "--config", CONFIG_A,
         ],
         cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
     )
     yield proc
     proc.terminate()
