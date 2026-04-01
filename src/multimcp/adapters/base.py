@@ -47,12 +47,10 @@ class MCPConfigAdapter(ABC):
         """
         if not path.exists():
             return
-        if self.backup_dir is not None:
-            dest_dir = self.backup_dir
-        else:
-            dest_dir = path.parent
+        dest_dir = self.backup_dir if self.backup_dir is not None else path.parent
+        dest_name = f"{self.tool_name}_{path.name}.bak" if self.backup_dir else path.name + ".bak"
         dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, dest_dir / (path.name + ".bak"))
+        shutil.copy2(path, dest_dir / dest_name)
 
     @abstractmethod
     def config_path(self) -> Optional[Path]:
