@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -9,16 +11,43 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 class ZedAdapter(MCPConfigAdapter):
-    """Adapter for the Zed code editor."""
+    """Adapter for the Zed code editor.
+
+    Config file locations:
+
+    * **Linux**: ``~/.config/zed/settings.json``
+    * **macOS**: ``~/.zed/settings.json``
+    * **Windows**: ``%APPDATA%\\Zed\\settings.json``
+
+    Zed uses the ``context_servers`` key for MCP server entries.
+    """
 
     tool_name = "zed"
     display_name = "Zed"
     config_format = "json"
     supported_platforms = ["macos", "linux", "windows"]
 
+    def _get_appdata_path(self) -> Path:
+        """Get the Windows AppData Roaming path.
+
+        Prefers APPDATA environment variable, falls back to standard location
+        under user home directory.
+        """
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            return Path(appdata)
+        return Path.home() / "AppData" / "Roaming"
+
     def config_path(self) -> Optional[Path]:
-        """Return the path to Zed's settings.json."""
-        return Path.home() / ".config" / "zed" / "settings.json"
+        """Return the platform-specific path to Zed's settings.json."""
+        if sys.platform == "darwin":
+            base = Path.home() / ".zed"
+        elif sys.platform == "win32":
+            base = self._get_appdata_path()
+            return base / "Zed" / "settings.json"
+        else:
+            base = Path.home() / ".config" / "zed"
+        return base / "settings.json"
 
     def read_config(self) -> Dict:
         """Read Zed's settings.json, returning {} if absent."""
@@ -31,6 +60,7 @@ class ZedAdapter(MCPConfigAdapter):
         """Write *data* to Zed's settings.json."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

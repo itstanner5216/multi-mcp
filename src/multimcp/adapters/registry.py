@@ -1,6 +1,7 @@
 """Adapter registry for all supported MCP config adapters."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Type
 
 from src.multimcp.adapters.base import MCPConfigAdapter
@@ -48,10 +49,14 @@ _ALL_ADAPTER_CLASSES: List[Type[MCPConfigAdapter]] = sorted(
 class AdapterRegistry:
     """Registry that provides access to all built-in MCP config adapters."""
 
-    def __init__(self) -> None:
-        self._adapters: Dict[str, MCPConfigAdapter] = {
-            cls.tool_name: cls() for cls in _ALL_ADAPTER_CLASSES
-        }
+    def __init__(self, backup_dir: Optional[Path] = None):
+        """Initialize the registry with all available adapters."""
+        self._adapters: Dict[str, MCPConfigAdapter] = {}
+        for cls in _ALL_ADAPTER_CLASSES:
+            adapter = cls()
+            if backup_dir is not None:
+                adapter.backup_dir = backup_dir
+            self._adapters[cls.tool_name] = adapter
 
     def all(self) -> List[MCPConfigAdapter]:
         """Return all adapters in alphabetical order by tool name."""
