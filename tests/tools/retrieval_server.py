@@ -5,7 +5,7 @@ The JSON config may include both "mcpServers" and a "retrieval" section.
 Passing config= to MultiMCP prevents auto-discovery of system-wide MCP servers.
 
 Usage:
-    python tests/tools/retrieval_server.py <json_path> <port>
+    python tests/tools/retrieval_server.py <json_path> [port]
 """
 import asyncio
 import sys
