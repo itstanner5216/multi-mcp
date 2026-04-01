@@ -960,10 +960,7 @@ class MultiMCP:
                 await self.proxy.unregister_client(name)
                 # Rebuild the active retriever index after dynamic server remove when supported.
                 if self.proxy.retrieval_pipeline is not None and self.proxy.tool_to_server:
-                    active_retriever = self.proxy.retrieval_pipeline.retriever
-                    rebuild = getattr(active_retriever, "rebuild_index", None)
-                    if rebuild is not None:
-                        rebuild(self.proxy.tool_to_server)
+                    self.proxy.retrieval_pipeline.rebuild_catalog(self.proxy.tool_to_server)
                 return JSONResponse(
                     {"message": f"Client '{name}' removed successfully"}
                 )
