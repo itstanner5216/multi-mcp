@@ -124,6 +124,7 @@ def cmd_install(
     tool: Optional[str] = None,
     server_name: Optional[str] = None,
     server_config: Optional[Dict[str, Any]] = None,
+    yaml_path: Path = DEFAULT_YAML,
 ) -> str:
     """Register *server_name* / *server_config* into one or all AI tool configs.
 
@@ -132,8 +133,14 @@ def cmd_install(
 
     Returns a human-readable multi-line summary of results.
     """
-    from src.multimcp.adapters import get_adapter, list_adapters
+    from src.multimcp.adapters import configure_registry, get_adapter, list_adapters
     from src.multimcp.adapters.base import MCPConfigAdapter as _MCPAdapter
+
+    # Propagate backup_dir from YAML config into the adapter registry so that
+    # every write_config call creates a .bak before overwriting.
+    yaml_config = load_config(yaml_path)
+    backup_dir = Path(yaml_config.backup_dir) if yaml_config.backup_dir else None
+    configure_registry(backup_dir=backup_dir)
 
     effective_name = server_name if server_name is not None else _DEFAULT_SERVER_NAME
     effective_config = server_config if server_config is not None else _DEFAULT_SERVER_CONFIG

@@ -61,7 +61,7 @@ class OpenClawAdapter(MCPConfigAdapter):
 
     def _resolve_path(self) -> Path:
         """Return the default path to OpenClaw's config file."""
-        return Path.home() / ".config" / "openclaw" / "clawdbot.json5"
+        return Path.home() / ".openclaw" / "openclaw.json"
 
     def config_path(self) -> Optional[Path]:
         """Return the path to OpenClaw's JSON5 config file."""
@@ -82,6 +82,7 @@ class OpenClawAdapter(MCPConfigAdapter):
     def write_config(self, data: Dict) -> None:
         """Write *data* as plain JSON to the OpenClaw config file."""
         path = self._resolve_path()
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

@@ -34,6 +34,7 @@ class CodexDesktopAdapter(MCPConfigAdapter):
         """Write *data* to the shared Codex config.toml."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         write_toml(path, data)
 
     def register_server(self, name: str, config: Dict) -> None:

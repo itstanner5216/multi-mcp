@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -9,7 +11,16 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 class ZedAdapter(MCPConfigAdapter):
-    """Adapter for the Zed code editor."""
+    """Adapter for the Zed code editor.
+
+    Config file locations:
+
+    * **Linux**: ``~/.config/zed/settings.json``
+    * **macOS**: ``~/.zed/settings.json``
+    * **Windows**: ``%APPDATA%\\Zed\\settings.json``
+
+    Zed uses the ``context_servers`` key for MCP server entries.
+    """
 
     tool_name = "zed"
     display_name = "Zed"
@@ -17,7 +28,12 @@ class ZedAdapter(MCPConfigAdapter):
     supported_platforms = ["macos", "linux", "windows"]
 
     def config_path(self) -> Optional[Path]:
-        """Return the path to Zed's settings.json."""
+        """Return the platform-specific path to Zed's settings.json."""
+        if sys.platform == "darwin":
+            return Path.home() / ".zed" / "settings.json"
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA", "")
+            return Path(appdata) / "Zed" / "settings.json"
         return Path.home() / ".config" / "zed" / "settings.json"
 
     def read_config(self) -> Dict:
@@ -31,6 +47,7 @@ class ZedAdapter(MCPConfigAdapter):
         """Write *data* to Zed's settings.json."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

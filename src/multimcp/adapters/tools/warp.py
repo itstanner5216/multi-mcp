@@ -1,11 +1,12 @@
 """Warp Terminal MCP config adapter.
 
-Warp uses a single JSON file on Linux and a directory of per-server JSON files
-on macOS (inside the group-container sandbox).
+Warp uses a directory of per-server JSON files on macOS and Windows, and a
+single JSON file on Linux.
 """
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -14,12 +15,19 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 class WarpAdapter(MCPConfigAdapter):
-    """Adapter for the Warp terminal application."""
+    """Adapter for the Warp terminal application.
+
+    Config locations:
+
+    * **macOS**: ``~/Library/Group Containers/2BBY89MBSN.dev.warp/Library/Application Support/dev.warp.Warp-Stable/mcp/`` (directory of per-server JSON files)
+    * **Linux**: ``~/.config/warp-terminal/mcp_servers.json`` (single JSON file)
+    * **Windows**: ``%LOCALAPPDATA%\\warp\\Warp\\data\\mcp\\`` (directory of per-server JSON files)
+    """
 
     tool_name = "warp"
     display_name = "Warp Terminal"
     config_format = "json"
-    supported_platforms = ["macos", "linux"]
+    supported_platforms = ["macos", "linux", "windows"]
 
     def config_path(self) -> Optional[Path]:
         """Return the platform-specific Warp MCP config path."""
@@ -29,13 +37,19 @@ class WarpAdapter(MCPConfigAdapter):
                 / "Library"
                 / "Group Containers"
                 / "2BBY89MBSN.dev.warp"
-                / "MCP Servers"
+                / "Library"
+                / "Application Support"
+                / "dev.warp.Warp-Stable"
+                / "mcp"
             )
+        if sys.platform == "win32":
+            local = os.environ.get("LOCALAPPDATA", "")
+            return Path(local) / "warp" / "Warp" / "data" / "mcp"
         return Path.home() / ".config" / "warp-terminal" / "mcp_servers.json"
 
     def _is_dir_mode(self) -> bool:
         """Return True when Warp uses a directory of per-server JSON files."""
-        return sys.platform == "darwin"
+        return sys.platform in ("darwin", "win32")
 
     def read_config(self) -> Dict:
         """Read the Warp MCP config, returning {} if absent."""
@@ -64,10 +78,13 @@ class WarpAdapter(MCPConfigAdapter):
         if self._is_dir_mode():
             path.mkdir(parents=True, exist_ok=True)
             for name, cfg in data.items():
-                (path / f"{name}.json").write_text(
+                dest = path / f"{name}.json"
+                self._backup(dest)
+                dest.write_text(
                     json.dumps(cfg, indent=2) + "\n", encoding="utf-8"
                 )
         else:
+            self._backup(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -77,7 +94,9 @@ class WarpAdapter(MCPConfigAdapter):
             path = self.config_path()
             assert path is not None
             path.mkdir(parents=True, exist_ok=True)
-            (path / f"{name}.json").write_text(
+            dest = path / f"{name}.json"
+            self._backup(dest)
+            dest.write_text(
                 json.dumps(config, indent=2) + "\n", encoding="utf-8"
             )
         else:

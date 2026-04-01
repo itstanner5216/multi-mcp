@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -11,7 +13,15 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 class OpenCodeAdapter(MCPConfigAdapter):
     """Adapter for the OpenCode AI assistant.
 
-    OpenCode stores MCP servers under the ``mcp`` key in its config.json.
+    OpenCode stores its full configuration (including MCP servers under the
+    ``mcp`` key) in a platform-specific JSON or JSONC file:
+
+    * **Linux / macOS**: ``~/.config/opencode/opencode.json``
+    * **Windows**: ``%APPDATA%\\opencode\\opencode.jsonc``
+
+    A project-level ``opencode.json`` in the current working directory is
+    checked first; the user-level path is used as the fallback destination for
+    writes when no project file exists.
     """
 
     tool_name = "opencode"
@@ -19,9 +29,23 @@ class OpenCodeAdapter(MCPConfigAdapter):
     config_format = "json"
     supported_platforms = ["macos", "linux", "windows"]
 
+    def _user_config_path(self) -> Path:
+        """Return the user-level OpenCode config path."""
+        if sys.platform == "win32":
+            appdata = os.environ.get("APPDATA", "")
+            return Path(appdata) / "opencode" / "opencode.jsonc"
+        return Path.home() / ".config" / "opencode" / "opencode.json"
+
     def config_path(self) -> Optional[Path]:
-        """Return the path to OpenCode's config.json."""
-        return Path.home() / ".config" / "opencode" / "config.json"
+        """Return the active OpenCode config path.
+
+        Checks for a project-local ``opencode.json`` first; falls back to the
+        user-level config path.
+        """
+        project = Path.cwd() / "opencode.json"
+        if project.exists():
+            return project
+        return self._user_config_path()
 
     def read_config(self) -> Dict:
         """Read OpenCode's config, returning {} if absent."""
@@ -31,9 +55,10 @@ class OpenCodeAdapter(MCPConfigAdapter):
         return json.loads(path.read_text(encoding="utf-8"))
 
     def write_config(self, data: Dict) -> None:
-        """Write *data* to OpenCode's config.json."""
+        """Write *data* to OpenCode's config file."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

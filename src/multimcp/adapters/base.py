@@ -1,6 +1,7 @@
 """Base class and platform utilities for MCP config adapters."""
 from __future__ import annotations
 
+import shutil
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -28,9 +29,30 @@ class MCPConfigAdapter(ABC):
     config_format: str  # "json" | "yaml" | "toml" | "json5"
     supported_platforms: List[str]
 
+    #: Optional directory for backup files.  When *None* (the default) each
+    #: backup is written beside the source config file.  Set by the caller
+    #: (e.g. the adapter registry) from the YAML ``backup_dir`` setting.
+    backup_dir: Optional[Path] = None
+
     def is_supported(self) -> bool:
         """Return True when this adapter is usable on the current platform."""
         return _current_platform() in self.supported_platforms
+
+    def _backup(self, path: Path) -> None:
+        """Create a ``.bak`` copy of *path* before it is overwritten.
+
+        The backup is placed in ``self.backup_dir`` when set, otherwise in the
+        same directory as *path*.  The method is a no-op when *path* does not
+        exist (nothing to back up).
+        """
+        if not path.exists():
+            return
+        if self.backup_dir is not None:
+            dest_dir = self.backup_dir
+        else:
+            dest_dir = path.parent
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, dest_dir / (path.name + ".bak"))
 
     @abstractmethod
     def config_path(self) -> Optional[Path]:
