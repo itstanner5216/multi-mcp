@@ -1,4 +1,4 @@
-"""Antigravity MCP config adapter."""
+"""Antigravity IDE MCP config adapter."""
 from __future__ import annotations
 
 import json
@@ -9,10 +9,10 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 class AntigravityAdapter(MCPConfigAdapter):
-    """Adapter for the Antigravity AI tool.
+    """Adapter for the Antigravity IDE.
 
-    Config lives at ``./mcp_config.json`` relative to the project root
-    (current working directory).
+    Config lives at ``~/.gemini/antigravity/mcp_config.json`` on all platforms.
+    On Windows the same path is resolved relative to ``%USERPROFILE%``.
     """
 
     tool_name = "antigravity"
@@ -22,7 +22,7 @@ class AntigravityAdapter(MCPConfigAdapter):
 
     def config_path(self) -> Optional[Path]:
         """Return the path to Antigravity's mcp_config.json."""
-        return Path.cwd() / "mcp_config.json"
+        return Path.home() / ".gemini" / "antigravity" / "mcp_config.json"
 
     def read_config(self) -> Dict:
         """Read Antigravity's config, returning {} if absent."""
@@ -35,6 +35,7 @@ class AntigravityAdapter(MCPConfigAdapter):
         """Write *data* to Antigravity's mcp_config.json with a trailing newline."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

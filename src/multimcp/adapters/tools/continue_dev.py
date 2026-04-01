@@ -1,8 +1,10 @@
 """Continue.dev MCP config adapter."""
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
@@ -10,56 +12,66 @@ from src.multimcp.adapters.base import MCPConfigAdapter
 
 
 class ContinueDevAdapter(MCPConfigAdapter):
-    """Adapter for the Continue.dev VS Code / JetBrains extension."""
+    """Adapter for the Continue.dev VS Code / JetBrains extension.
+
+    Continue stores its full configuration in a single ``config.yaml`` file:
+
+    * **Linux / macOS**: ``~/.continue/config.yaml``
+    * **Windows**: ``%USERPROFILE%\\.continue\\config.yaml``
+
+    MCP servers live under the top-level ``mcpServers`` list in that file, each
+    item being a dict with at least a ``name`` key.
+    """
 
     tool_name = "continue_dev"
     display_name = "Continue.dev"
     config_format = "yaml"
     supported_platforms = ["macos", "linux", "windows"]
 
-    def _servers_dir(self) -> Path:
-        """Return the directory that holds per-server YAML files."""
-        return Path.home() / ".continue" / "mcpServers"
-
     def config_path(self) -> Optional[Path]:
-        """Return the mcpServers directory path."""
-        return self._servers_dir()
+        """Return the path to Continue's config.yaml."""
+        if sys.platform == "win32":
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
+        else:
+            base = Path.home()
+        return base / ".continue" / "config.yaml"
 
     def read_config(self) -> Dict:
-        """Read all server YAML files, returning {} if the directory is absent."""
-        servers_dir = self._servers_dir()
-        if not servers_dir.exists():
+        """Read Continue's config.yaml, returning {} if absent."""
+        path = self.config_path()
+        if path is None or not path.exists():
             return {}
-        result: Dict = {}
-        for yaml_file in sorted(servers_dir.glob("*.yaml")):
-            data = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
-            name = data.pop("name", yaml_file.stem)
-            result[name] = data
-        return result
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
     def write_config(self, data: Dict) -> None:
-        """Write per-server YAML files for every entry in *data*."""
-        servers_dir = self._servers_dir()
-        servers_dir.mkdir(parents=True, exist_ok=True)
-        for name, config in data.items():
-            yaml_file = servers_dir / f"{name}.yaml"
-            entry = {"name": name, **config}
-            yaml_file.write_text(
-                yaml.dump(entry, default_flow_style=False, allow_unicode=True),
-                encoding="utf-8",
-            )
-
-    def register_server(self, name: str, config: Dict) -> None:
-        """Write or overwrite a single server YAML file."""
-        servers_dir = self._servers_dir()
-        servers_dir.mkdir(parents=True, exist_ok=True)
-        yaml_file = servers_dir / f"{name}.yaml"
-        entry = {"name": name, **config}
-        yaml_file.write_text(
-            yaml.dump(entry, default_flow_style=False, allow_unicode=True),
+        """Write *data* to Continue's config.yaml."""
+        path = self.config_path()
+        assert path is not None
+        self._backup(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.dump(data, default_flow_style=False, allow_unicode=True),
             encoding="utf-8",
         )
 
+    def register_server(self, name: str, config: Dict) -> None:
+        """Add or replace an entry in the ``mcpServers`` list."""
+        data = self.read_config()
+        servers: List[Any] = data.setdefault("mcpServers", [])
+        # Remove any existing entry with the same name
+        servers = [s for s in servers if not (isinstance(s, dict) and s.get("name") == name)]
+        # Ensure the method argument wins by merging config first, then overriding name
+        entry = {**config, "name": name}
+        servers.append(entry)
+        data["mcpServers"] = servers
+        self.write_config(data)
+
     def discover_servers(self) -> Dict[str, Dict]:
-        """Return a name→config mapping from all YAML files in the servers dir."""
-        return self.read_config()
+        """Return a name→config mapping from the ``mcpServers`` list."""
+        servers_list = self.read_config().get("mcpServers", [])
+        return {
+            s["name"]: {k: v for k, v in s.items() if k != "name"}
+            for s in servers_list
+            if isinstance(s, dict) and "name" in s
+        }

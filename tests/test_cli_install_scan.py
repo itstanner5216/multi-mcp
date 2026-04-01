@@ -387,14 +387,14 @@ class TestCmdInstallScanIntegration:
 
         assert "test-mcp" in scan_result
 
-    def test_install_jetbrains_shows_not_implemented_warning(self) -> None:
-        """Installing into JetBrains raises NotImplementedError, shown as warning."""
+    def test_install_jetbrains_succeeds(self) -> None:
+        """Installing into JetBrains now writes to ~/.junie/mcp/mcp.json."""
         from src.multimcp.adapters import get_adapter
         adapter = get_adapter("jetbrains")
         assert adapter is not None
 
         with patch("src.multimcp.adapters.get_adapter", return_value=adapter), \
-             patch("src.multimcp.adapters.list_adapters", return_value=[adapter]):
+             patch("src.multimcp.adapters.list_adapters", return_value=[adapter]), \
+             patch.object(adapter, "register_server"):
             result = cmd_install(tool="jetbrains", server_name="my-server")
-        assert "⚠️" in result
         assert "JetBrains" in result

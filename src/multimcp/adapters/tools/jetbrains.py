@@ -1,19 +1,26 @@
-"""JetBrains IDE MCP config adapter (read-only discovery)."""
+"""JetBrains IDEs MCP config adapter."""
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
 from typing import Dict, Optional
 
 from src.multimcp.adapters.base import MCPConfigAdapter
+from src.utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class JetBrainsAdapter(MCPConfigAdapter):
-    """Read-only adapter for JetBrains IDEs.
+    """Adapter for JetBrains IDEs (IntelliJ, PyCharm, WebStorm, etc.).
 
-    JetBrains manages MCP servers through its own UI; programmatic writes are
-    not supported.  ``register_server`` and ``write_config`` raise
-    ``NotImplementedError`` to make that explicit.
+    JetBrains stores MCP configuration in a shared ``mcp.json`` file under
+    the Junie plugin directory:
+
+    * **Linux / macOS**: ``~/.junie/mcp/mcp.json``
+    * **Windows**: ``%USERPROFILE%\\.junie\\mcp\\mcp.json``
     """
 
     tool_name = "jetbrains"
@@ -21,54 +28,46 @@ class JetBrainsAdapter(MCPConfigAdapter):
     config_format = "json"
     supported_platforms = ["macos", "linux", "windows"]
 
-    def _jetbrains_root(self) -> Path:
-        """Return the root JetBrains config directory."""
-        return Path.home() / ".config" / "JetBrains"
-
     def config_path(self) -> Optional[Path]:
-        """Return the JetBrains config root directory."""
-        return self._jetbrains_root()
+        """Return the path to the JetBrains Junie MCP config file."""
+        if sys.platform == "win32":
+            userprofile = os.environ.get("USERPROFILE")
+            base = Path(userprofile) if userprofile else Path.home()
+        else:
+            base = Path.home()
+        return base / ".junie" / "mcp" / "mcp.json"
 
     def read_config(self) -> Dict:
-        """Return a best-effort view of registered MCP servers.
-
-        Scans known config locations; returns {} when none are found.
-        """
-        root = self._jetbrains_root()
-        if not root.exists():
+        """Read the JetBrains MCP config, returning {} if absent."""
+        path = self.config_path()
+        if path is None or not path.exists():
             return {}
-        result: Dict = {}
-        for mcp_file in root.rglob("mcp.json"):
-            try:
-                data = json.loads(mcp_file.read_text(encoding="utf-8"))
-                result.update(data)
-            except (json.JSONDecodeError, OSError):
-                pass
-        return result
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse JetBrains config at {path}: {e}")
+            raise
+        except OSError as e:
+            logger.error(f"Failed to read JetBrains config at {path}: {e}")
+            raise
+        if not isinstance(data, dict):
+            return {}
+        return data
 
     def write_config(self, data: Dict) -> None:
-        """Not supported – JetBrains config must be managed through the IDE UI."""
-        raise NotImplementedError(
-            "JetBrains MCP config must be managed through the IDE UI."
-        )
+        """Write *data* to the JetBrains Junie MCP config file."""
+        path = self.config_path()
+        assert path is not None
+        self._backup(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
     def register_server(self, name: str, config: Dict) -> None:
-        """Not supported – JetBrains config must be managed through the IDE UI."""
-        raise NotImplementedError(
-            "JetBrains MCP server registration must be done through the IDE UI."
-        )
+        """Add or update an MCP server entry under the ``mcpServers`` key."""
+        data = self.read_config()
+        data.setdefault("mcpServers", {})[name] = config
+        self.write_config(data)
 
     def discover_servers(self) -> Dict[str, Dict]:
-        """Return discovered MCP servers from JetBrains config files."""
-        root = self._jetbrains_root()
-        if not root.exists():
-            return {}
-        result: Dict = {}
-        for mcp_file in root.rglob("mcp.json"):
-            try:
-                data = json.loads(mcp_file.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    result.update(data)
-            except (json.JSONDecodeError, OSError):
-                pass
-        return result
+        """Return all servers from the JetBrains Junie ``mcpServers`` key."""
+        return self.read_config().get("mcpServers", {})

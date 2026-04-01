@@ -50,6 +50,15 @@ class MultiMCPConfig(BaseModel):
     exclude_servers: list[str] = Field(default_factory=list)
     """Server names to never auto-import, even if found in editor configs."""
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
+    backup_dir: Optional[str] = None
+    """Directory in which to store .bak files created before writing any tool config.
+
+    When *None* (the default) each backup is placed in the same directory as the
+    config file being modified.  Set this to an absolute path to collect all
+    backups in a single location, e.g.::
+
+        backup_dir: /home/alice/.config/multi-mcp/backups
+    """
 
 
 def load_config(path: Path) -> MultiMCPConfig:

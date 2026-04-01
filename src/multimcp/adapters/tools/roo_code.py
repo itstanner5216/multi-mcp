@@ -31,6 +31,7 @@ class RooCodeAdapter(MCPConfigAdapter):
         """Write *data* to Roo Code's mcp.json."""
         path = self.config_path()
         assert path is not None
+        self._backup(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 

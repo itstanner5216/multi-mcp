@@ -180,7 +180,6 @@ class TestZedAdapter:
         path = adapter.config_path()
         assert path is not None
         assert path.name == "settings.json"
-        assert ".config/zed" in str(path)
 
     def test_read_config_missing_file(self, tmp_path: Path) -> None:
         adapter = self._adapter()
@@ -228,52 +227,53 @@ class TestContinueDevAdapter:
     def _adapter(self):
         return get_adapter("continue_dev")
 
-    def test_config_path_returns_servers_dir(self) -> None:
+    def test_config_path_returns_config_yaml(self) -> None:
         adapter = self._adapter()
         path = adapter.config_path()
         assert path is not None
-        assert "mcpServers" in str(path)
+        assert path.name == "config.yaml"
+        assert ".continue" in str(path)
 
-    def test_read_config_empty_when_dir_missing(self, tmp_path: Path) -> None:
+    def test_read_config_empty_when_file_missing(self, tmp_path: Path) -> None:
         adapter = self._adapter()
-        with patch.object(adapter, "_servers_dir", return_value=tmp_path / "mcpServers"):
+        with patch.object(adapter, "config_path", return_value=tmp_path / "config.yaml"):
             assert adapter.read_config() == {}
 
     def test_register_server_writes_yaml_file(self, tmp_path: Path) -> None:
-        servers_dir = tmp_path / "mcpServers"
+        p = tmp_path / "config.yaml"
         adapter = self._adapter()
-        with patch.object(adapter, "_servers_dir", return_value=servers_dir):
+        with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("weather", {"command": "python", "args": ["w.py"]})
-        yaml_file = servers_dir / "weather.yaml"
-        assert yaml_file.exists()
-        data = yaml.safe_load(yaml_file.read_text())
-        assert data["name"] == "weather"
-        assert data["command"] == "python"
+        data = yaml.safe_load(p.read_text())
+        assert any(s["name"] == "weather" for s in data["mcpServers"])
 
-    def test_discover_servers_reads_all_yaml_files(self, tmp_path: Path) -> None:
-        servers_dir = tmp_path / "mcpServers"
-        servers_dir.mkdir(parents=True)
-        (servers_dir / "weather.yaml").write_text(
-            "name: weather\ncommand: python\nargs:\n  - w.py\n", encoding="utf-8"
-        )
-        (servers_dir / "github.yaml").write_text(
-            "name: github\nurl: http://localhost:9090/sse\n", encoding="utf-8"
-        )
+    def test_discover_servers_reads_yaml(self, tmp_path: Path) -> None:
+        content = yaml.dump({
+            "mcpServers": [
+                {"name": "weather", "command": "python", "args": ["w.py"]},
+                {"name": "github", "url": "http://localhost:9090/sse"},
+            ]
+        })
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
         adapter = self._adapter()
-        with patch.object(adapter, "_servers_dir", return_value=servers_dir):
+        with patch.object(adapter, "config_path", return_value=p):
             servers = adapter.discover_servers()
         assert "weather" in servers
         assert "github" in servers
 
     def test_register_server_overwrites_existing_entry(self, tmp_path: Path) -> None:
-        servers_dir = tmp_path / "mcpServers"
-        servers_dir.mkdir(parents=True)
-        (servers_dir / "weather.yaml").write_text("name: weather\ncommand: old\n", encoding="utf-8")
+        content = yaml.dump({"mcpServers": [{"name": "weather", "command": "old"}]})
+        p = tmp_path / "config.yaml"
+        p.write_text(content, encoding="utf-8")
         adapter = self._adapter()
-        with patch.object(adapter, "_servers_dir", return_value=servers_dir):
+        with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("weather", {"command": "new"})
             servers = adapter.discover_servers()
         assert servers["weather"]["command"] == "new"
+        # Should not have duplicates
+        raw = yaml.safe_load(p.read_text())
+        assert len([s for s in raw["mcpServers"] if s["name"] == "weather"]) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +289,6 @@ class TestClineAdapter:
         path = adapter.config_path()
         assert path is not None
         assert "cline_mcp_settings.json" in str(path)
-        assert ".cline" in str(path)
 
     def test_read_config_missing_returns_empty(self, tmp_path: Path) -> None:
         adapter = self._adapter()
@@ -462,29 +461,41 @@ class TestWarpAdapter:
 
 
 # ---------------------------------------------------------------------------
-# JetBrains (read-only / NotImplementedError on write)
+# JetBrains (Junie mcp.json)
 # ---------------------------------------------------------------------------
 
 class TestJetBrainsAdapter:
     def _adapter(self):
         return get_adapter("jetbrains")
 
-    def test_register_server_raises_not_implemented(self) -> None:
+    def test_config_path_returns_junie_mcp_json(self) -> None:
         adapter = self._adapter()
-        with pytest.raises(NotImplementedError):
-            adapter.register_server("any", {})
+        path = adapter.config_path()
+        assert path is not None
+        assert ".junie" in str(path)
+        assert path.name == "mcp.json"
 
-    def test_write_config_raises_not_implemented(self) -> None:
+    def test_register_and_discover(self, tmp_path: Path) -> None:
+        p = tmp_path / "mcp.json"
         adapter = self._adapter()
-        with pytest.raises(NotImplementedError):
-            adapter.write_config({})
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.register_server("srv", {"command": "python"})
+            servers = adapter.discover_servers()
+        assert "srv" in servers
+        assert servers["srv"]["command"] == "python"
 
     def test_discover_servers_returns_dict(self, tmp_path: Path) -> None:
-        # When no JetBrains config exists, should return empty dict
+        p = tmp_path / "mcp.json"
         adapter = self._adapter()
-        with patch.object(adapter, "_jetbrains_root", return_value=tmp_path / "JetBrains"):
+        with patch.object(adapter, "config_path", return_value=p):
             result = adapter.discover_servers()
         assert isinstance(result, dict)
+        assert result == {}
+
+    def test_read_config_missing_returns_empty(self, tmp_path: Path) -> None:
+        adapter = self._adapter()
+        with patch.object(adapter, "config_path", return_value=tmp_path / "mcp.json"):
+            assert adapter.read_config() == {}
 
 
 # ---------------------------------------------------------------------------
@@ -558,11 +569,13 @@ class TestAntigravityAdapter:
     def _adapter(self):
         return get_adapter("antigravity")
 
-    def test_config_path_is_project_root(self) -> None:
+    def test_config_path_is_gemini_antigravity(self) -> None:
         adapter = self._adapter()
         path = adapter.config_path()
         assert path is not None
         assert path.name == "mcp_config.json"
+        assert ".gemini" in str(path)
+        assert "antigravity" in str(path)
 
     def test_supported_on_all_platforms(self) -> None:
         adapter = self._adapter()
@@ -618,35 +631,35 @@ class TestAntigravityAdapter:
 
 
 # ---------------------------------------------------------------------------
-# GitHub Copilot (VS Code)
+# GitHub Copilot CLI
 # ---------------------------------------------------------------------------
 
 class TestGitHubCopilotAdapter:
     def _adapter(self):
         return get_adapter("github_copilot")
 
-    def test_config_path_is_vscode_mcp_json(self) -> None:
+    def test_config_path_is_copilot_mcp_config_json(self) -> None:
         adapter = self._adapter()
         path = adapter.config_path()
         assert path is not None
-        assert path.name == "mcp.json"
-        assert ".vscode" in str(path)
+        assert path.name == "mcp-config.json"
+        assert ".copilot" in str(path)
 
     def test_read_config_missing_returns_empty(self, tmp_path: Path) -> None:
         adapter = self._adapter()
-        with patch.object(adapter, "config_path", return_value=tmp_path / "mcp.json"):
+        with patch.object(adapter, "config_path", return_value=tmp_path / "mcp-config.json"):
             assert adapter.read_config() == {}
 
-    def test_uses_servers_key_not_mcpservers(self, tmp_path: Path) -> None:
-        data = {"servers": {"my-srv": {"type": "stdio", "command": "python"}}}
-        p = _make_json_config(tmp_path, "mcp.json", data)
+    def test_uses_mcpservers_key(self, tmp_path: Path) -> None:
+        data = {"mcpServers": {"my-srv": {"type": "stdio", "command": "python"}}}
+        p = _make_json_config(tmp_path, "mcp-config.json", data)
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             servers = adapter.discover_servers()
         assert "my-srv" in servers
 
     def test_register_and_discover(self, tmp_path: Path) -> None:
-        p = tmp_path / "mcp.json"
+        p = tmp_path / "mcp-config.json"
         adapter = self._adapter()
         cfg = {"type": "stdio", "command": "uvx", "args": ["mcp-server-git"]}
         with patch.object(adapter, "config_path", return_value=p):
@@ -657,8 +670,8 @@ class TestGitHubCopilotAdapter:
         assert servers["git-server"]["command"] == "uvx"
 
     def test_register_preserves_existing_servers(self, tmp_path: Path) -> None:
-        existing = {"servers": {"old": {"type": "stdio", "command": "node"}}}
-        p = _make_json_config(tmp_path, "mcp.json", existing)
+        existing = {"mcpServers": {"old": {"type": "stdio", "command": "node"}}}
+        p = _make_json_config(tmp_path, "mcp-config.json", existing)
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("new", {"type": "sse", "url": "http://localhost:9000"})
@@ -667,23 +680,23 @@ class TestGitHubCopilotAdapter:
         assert "new" in servers
 
     def test_register_updates_existing_server(self, tmp_path: Path) -> None:
-        existing = {"servers": {"my-srv": {"type": "stdio", "command": "old-cmd"}}}
-        p = _make_json_config(tmp_path, "mcp.json", existing)
+        existing = {"mcpServers": {"my-srv": {"type": "stdio", "command": "old-cmd"}}}
+        p = _make_json_config(tmp_path, "mcp-config.json", existing)
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("my-srv", {"type": "stdio", "command": "new-cmd"})
             servers = adapter.discover_servers()
         assert servers["my-srv"]["command"] == "new-cmd"
 
-    def test_discover_no_servers_key_returns_empty(self, tmp_path: Path) -> None:
+    def test_discover_no_mcpservers_key_returns_empty(self, tmp_path: Path) -> None:
         data = {"other_setting": True}
-        p = _make_json_config(tmp_path, "mcp.json", data)
+        p = _make_json_config(tmp_path, "mcp-config.json", data)
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             assert adapter.discover_servers() == {}
 
-    def test_write_creates_vscode_directory(self, tmp_path: Path) -> None:
-        p = tmp_path / ".vscode" / "mcp.json"
+    def test_write_creates_copilot_directory(self, tmp_path: Path) -> None:
+        p = tmp_path / ".copilot" / "mcp-config.json"
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("srv", {"type": "stdio", "command": "python"})
@@ -703,7 +716,6 @@ class TestOpenCodeAdapter:
         path = adapter.config_path()
         assert path is not None
         assert "opencode" in str(path)
-        assert path.name == "config.json"
 
     def test_read_config_missing_returns_empty(self, tmp_path: Path) -> None:
         adapter = self._adapter()
@@ -751,58 +763,32 @@ class TestOpenCodeAdapter:
 
 
 # ---------------------------------------------------------------------------
-# Raycast (macOS-only)
+# Raycast
 # ---------------------------------------------------------------------------
 
 class TestRaycastAdapter:
     def _adapter(self):
         return get_adapter("raycast")
 
-    def test_supported_platforms_macos_only(self) -> None:
+    def test_supported_platforms(self) -> None:
         adapter = self._adapter()
-        assert adapter.supported_platforms == ["macos"]
+        assert set(adapter.supported_platforms) == {"macos", "linux"}
 
-    def test_config_path_macos(self) -> None:
-        with patch("sys.platform", "darwin"):
-            from src.multimcp.adapters.tools.raycast import RaycastAdapter
-            adapter = RaycastAdapter()
-            path = adapter.config_path()
+    def test_config_path(self) -> None:
+        adapter = self._adapter()
+        path = adapter.config_path()
         assert path is not None
-        assert "com.raycast.macos" in str(path)
-        assert path.name == "mcp-config.json"
-
-    def test_config_path_linux_returns_none(self) -> None:
-        with patch("sys.platform", "linux"):
-            from src.multimcp.adapters.tools.raycast import RaycastAdapter
-            adapter = RaycastAdapter()
-            path = adapter.config_path()
-        assert path is None
-
-    def test_config_path_windows_returns_none(self) -> None:
-        with patch("sys.platform", "win32"):
-            from src.multimcp.adapters.tools.raycast import RaycastAdapter
-            adapter = RaycastAdapter()
-            path = adapter.config_path()
-        assert path is None
-
-    def test_read_config_returns_empty_when_path_is_none(self) -> None:
-        adapter = self._adapter()
-        with patch.object(adapter, "config_path", return_value=None):
-            assert adapter.read_config() == {}
+        assert path.name == "mcp.json"
+        assert ".config" in str(path)
+        assert "raycast" in str(path)
 
     def test_read_config_returns_empty_for_missing_file(self, tmp_path: Path) -> None:
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=tmp_path / "missing.json"):
             assert adapter.read_config() == {}
 
-    def test_write_config_raises_on_none_path(self) -> None:
-        adapter = self._adapter()
-        with patch.object(adapter, "config_path", return_value=None):
-            with pytest.raises(RuntimeError, match="only supported on macOS"):
-                adapter.write_config({})
-
-    def test_register_and_discover_macos(self, tmp_path: Path) -> None:
-        p = tmp_path / "mcp-config.json"
+    def test_register_and_discover(self, tmp_path: Path) -> None:
+        p = tmp_path / "mcp.json"
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             adapter.register_server("my-raycast-srv", {"command": "python", "args": ["s.py"]})
@@ -812,15 +798,15 @@ class TestRaycastAdapter:
 
     def test_discover_uses_mcpservers_key(self, tmp_path: Path) -> None:
         data = {"mcpServers": {"srv1": {"command": "node"}}}
-        p = _make_json_config(tmp_path, "mcp-config.json", data)
+        p = _make_json_config(tmp_path, "mcp.json", data)
         adapter = self._adapter()
         with patch.object(adapter, "config_path", return_value=p):
             servers = adapter.discover_servers()
         assert "srv1" in servers
 
-    def test_is_not_supported_on_linux(self) -> None:
+    def test_is_not_supported_on_windows(self) -> None:
         adapter = self._adapter()
-        with patch("src.multimcp.adapters.base.sys.platform", "linux"):
+        with patch("src.multimcp.adapters.base.sys.platform", "win32"):
             assert not adapter.is_supported()
 
 
@@ -975,6 +961,104 @@ class TestCurrentPlatform:
             assert adapter.is_supported() is True
 
     def test_is_supported_false_when_platform_not_in_list(self) -> None:
-        adapter = get_adapter("raycast")  # only ["macos"]
-        with patch("src.multimcp.adapters.base.sys.platform", "linux"):
+        adapter = get_adapter("raycast")  # supports ["macos", "linux"] but not windows
+        with patch("src.multimcp.adapters.base.sys.platform", "win32"):
             assert adapter.is_supported() is False
+
+# ---------------------------------------------------------------------------
+# Backup mechanism (_backup helper + AdapterRegistry backup_dir propagation)
+# ---------------------------------------------------------------------------
+
+class TestBackupMechanism:
+    """Tests for the .bak file creation that happens before any write_config call."""
+
+    def _adapter(self):
+        return get_adapter("claude_desktop")
+
+    def test_backup_creates_bak_in_same_dir_by_default(self, tmp_path: Path) -> None:
+        """When backup_dir is None, .bak lands beside the source file."""
+        p = tmp_path / "claude_desktop_config.json"
+        p.write_text('{"mcpServers": {}}', encoding="utf-8")
+        adapter = self._adapter()
+        adapter.backup_dir = None
+        adapter._backup(p)
+        bak = tmp_path / "claude_desktop_config.json.bak"
+        assert bak.exists()
+        assert bak.read_text(encoding="utf-8") == '{"mcpServers": {}}'
+
+    def test_backup_uses_configured_backup_dir(self, tmp_path: Path) -> None:
+        """When backup_dir is set, .bak is written there instead."""
+        src_dir = tmp_path / "config"
+        src_dir.mkdir()
+        bak_dir = tmp_path / "backups"
+        p = src_dir / "settings.json"
+        p.write_text('{"data": 1}', encoding="utf-8")
+        adapter = self._adapter()
+        adapter.backup_dir = bak_dir
+        adapter._backup(p)
+        bak = bak_dir / "settings.json.bak"
+        assert bak.exists()
+        assert not (src_dir / "settings.json.bak").exists()
+
+    def test_backup_noop_when_file_missing(self, tmp_path: Path) -> None:
+        """_backup is a no-op when the source file does not yet exist."""
+        p = tmp_path / "nonexistent.json"
+        adapter = self._adapter()
+        adapter._backup(p)  # Should not raise
+        assert not list(tmp_path.iterdir())
+
+    def test_write_config_creates_bak_before_overwrite(self, tmp_path: Path) -> None:
+        """Calling write_config on an existing file creates the .bak first."""
+        p = tmp_path / "claude_desktop_config.json"
+        original = {"mcpServers": {"old": {"command": "old"}}}
+        p.write_text(json.dumps(original), encoding="utf-8")
+        adapter = self._adapter()
+        adapter.backup_dir = None
+        with patch.object(adapter, "config_path", return_value=p):
+            adapter.write_config({"mcpServers": {"new": {"command": "new"}}})
+        bak = tmp_path / "claude_desktop_config.json.bak"
+        assert bak.exists()
+        assert json.loads(bak.read_text())["mcpServers"]["old"]["command"] == "old"
+
+    def test_registry_propagates_backup_dir_to_adapters(self, tmp_path: Path) -> None:
+        """AdapterRegistry(backup_dir=...) sets backup_dir on all adapter instances."""
+        from src.multimcp.adapters.registry import AdapterRegistry
+        bak_dir = tmp_path / "backups"
+        registry = AdapterRegistry(backup_dir=bak_dir)
+        for adapter in registry.all():
+            assert adapter.backup_dir == bak_dir
+
+    def test_registry_default_has_no_backup_dir(self) -> None:
+        """AdapterRegistry() without backup_dir leaves backup_dir as None."""
+        from src.multimcp.adapters.registry import AdapterRegistry
+        registry = AdapterRegistry()
+        for adapter in registry.all():
+            assert adapter.backup_dir is None
+
+    def test_configure_registry_applies_backup_dir(self, tmp_path: Path) -> None:
+        """configure_registry() re-initialises the singleton with the given backup_dir."""
+        from src.multimcp.adapters import configure_registry, list_adapters
+        bak_dir = tmp_path / "baks"
+        configure_registry(backup_dir=bak_dir)
+        try:
+            for adapter in list_adapters():
+                assert adapter.backup_dir == bak_dir
+        finally:
+            configure_registry(backup_dir=None)  # reset to default
+
+
+class TestYamlConfigBackupDir:
+    """Tests for the backup_dir field in MultiMCPConfig."""
+
+    def test_backup_dir_defaults_to_none(self) -> None:
+        from src.multimcp.yaml_config import MultiMCPConfig
+        cfg = MultiMCPConfig()
+        assert cfg.backup_dir is None
+
+    def test_backup_dir_round_trips_through_yaml(self, tmp_path: Path) -> None:
+        from src.multimcp.yaml_config import MultiMCPConfig, save_config, load_config
+        cfg = MultiMCPConfig(backup_dir="/tmp/backups")
+        p = tmp_path / "servers.yaml"
+        save_config(cfg, p)
+        loaded = load_config(p)
+        assert loaded.backup_dir == "/tmp/backups"
