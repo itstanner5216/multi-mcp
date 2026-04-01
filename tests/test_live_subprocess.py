@@ -78,7 +78,8 @@ async def _wait_for_health(port: int, timeout: float = 20.0, interval: float = 0
                 r = await client.get(f"http://127.0.0.1:{port}/health", timeout=2.0)
                 if r.status_code == 200:
                     return True
-            except Exception:
+            except (httpx.RequestError, httpx.ConnectError, httpx.TimeoutException):
+                # Continue retrying on connection/request errors
                 pass
             await asyncio.sleep(interval)
     return False
@@ -198,8 +199,9 @@ class TestScenarioA:
         assert "calculator__multiply" in names, f"Expected calculator__multiply in: {names}"
 
     @pytest.mark.anyio
-    async def test_a6_dynamic_server_add(self, scenario_a):
-        """POST /mcp_servers adds unit_convertor; its tools appear in /mcp_tools."""
+    async def test_a6_dynamic_server_lifecycle(self, scenario_a):
+        """POST /mcp_servers adds unit_convertor, call it via SSE, then DELETE removes it."""
+        # Step 1: Add unit_convertor server
         payload = {
             "mcpServers": {
                 "unit_convertor": {
@@ -228,9 +230,7 @@ class TestScenarioA:
             f"Expected 'unit_convertor' in tools after add, got: {list(tools.keys())}"
         )
 
-    @pytest.mark.anyio
-    async def test_a7_added_tools_executable_via_sse(self, scenario_a):
-        """After dynamic add, unit_convertor__convert_length is callable over SSE."""
+        # Step 2: Execute the added tool via SSE
         result = await _mcp_call_tool(
             scenario_a,
             "unit_convertor__convert_length",
@@ -241,22 +241,20 @@ class TestScenarioA:
         # 1 km ≈ 0.621371 miles
         assert "0.621" in str(output), f"Expected ~0.621 in result, got: {output!r}"
 
-    @pytest.mark.anyio
-    async def test_a8_dynamic_server_remove(self, scenario_a):
-        """DELETE /mcp_servers/unit_convertor removes it; its tools disappear."""
+        # Step 3: Remove the server
         async with httpx.AsyncClient() as client:
-            r = await client.delete(
+            r3 = await client.delete(
                 f"http://127.0.0.1:{scenario_a}/mcp_servers/unit_convertor",
                 timeout=10.0,
             )
-        assert r.status_code == 200, f"DELETE /mcp_servers/unit_convertor failed: {r.status_code} {r.text}"
+        assert r3.status_code == 200, f"DELETE /mcp_servers/unit_convertor failed: {r3.status_code} {r3.text}"
 
         # Verify tools are gone from /mcp_tools
         async with httpx.AsyncClient() as client:
-            r2 = await client.get(f"http://127.0.0.1:{scenario_a}/mcp_tools", timeout=5.0)
-        tools = r2.json().get("tools", {})
-        assert "unit_convertor" not in tools, (
-            f"Expected 'unit_convertor' removed from tools, still present: {list(tools.keys())}"
+            r4 = await client.get(f"http://127.0.0.1:{scenario_a}/mcp_tools", timeout=5.0)
+        tools_after = r4.json().get("tools", {})
+        assert "unit_convertor" not in tools_after, (
+            f"Expected 'unit_convertor' removed from tools, still present: {list(tools_after.keys())}"
         )
 
 
@@ -323,8 +321,30 @@ async def scenario_b(scenario_b_proc):
         f"Scenario B server on port {SCENARIO_B_PORT} did not become healthy within 20s. "
         f"stderr: {(await asyncio.to_thread(scenario_b_proc.stderr.read, 4096)).decode(errors='replace') if scenario_b_proc.stderr else ''}"
     )
-    # Give the always_on calculator server time to connect and register tools
-    await asyncio.sleep(4.0)
+
+    # Poll /mcp_tools until calculator tools and request_tool are registered
+    deadline = time.monotonic() + 20.0
+    tools_ready = False
+    async with httpx.AsyncClient() as client:
+        while time.monotonic() < deadline:
+            try:
+                r = await client.get(f"http://127.0.0.1:{SCENARIO_B_PORT}/mcp_tools", timeout=2.0)
+                if r.status_code == 200:
+                    tools = r.json().get("tools", {})
+                    # Check for calculator tools (always_on server)
+                    if "calculator" in tools:
+                        calc_tools = tools["calculator"]
+                        if any(t in calc_tools for t in ["add", "multiply"]):
+                            tools_ready = True
+                            break
+            except (httpx.RequestError, httpx.ConnectError, httpx.TimeoutException):
+                pass
+            await asyncio.sleep(0.3)
+
+    assert tools_ready, (
+        f"Calculator tools did not appear in /mcp_tools within 20s. "
+        f"stderr: {(await asyncio.to_thread(scenario_b_proc.stderr.read, 4096)).decode(errors='replace') if scenario_b_proc.stderr else ''}"
+    )
     return SCENARIO_B_PORT
 
 
