@@ -68,7 +68,11 @@ class ClaudeDesktopAdapter(MCPConfigAdapter):
         path = self.config_path()
         if path is None or not path.exists():
             return {}
-        data = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Config at {path} is not valid JSON ({e}), using empty config")
+            return {}
         if not isinstance(data, dict):
             logger.warning(
                 f"Config at {path} returned non-dict data ({type(data).__name__}), using empty config"
