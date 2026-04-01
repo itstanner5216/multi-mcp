@@ -301,7 +301,7 @@ class TestTier4ClassificationPrecedence:
         """Full precedence order: infrastructure > rust > python > node > generic."""
         p = self._pipeline()
         tests = [
-            ({"infra:kubernetes": 1.0, "lang:python": 1.0, "manifest:package.json": 1.0}, "infrastructure"),
+            ({"infra:terraform": 1.0, "lang:python": 1.0, "manifest:package.json": 1.0}, "infrastructure"),
             ({"manifest:Cargo.toml": 1.0, "lang:python": 1.0}, "rust_cli"),
             ({"manifest:pyproject.toml": 1.0, "manifest:package.json": 1.0}, "python_web"),
             ({"manifest:package.json": 1.0}, "node_web"),

@@ -40,7 +40,6 @@ NAMESPACE_ALIASES: dict[str, list[str]] = {
     "npm": ["package", "install", "node", "dependency"],
     "pip": ["package", "install", "python", "dependency"],
     "cargo": ["crate", "build", "rust", "compile"],
-    "kubectl": ["kubernetes", "pod", "deployment", "service", "cluster"],
     "terraform": ["infrastructure", "cloud", "provision", "iac"],
 }
 
