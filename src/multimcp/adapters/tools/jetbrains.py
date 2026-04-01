@@ -40,9 +40,12 @@ class JetBrainsAdapter(MCPConfigAdapter):
         if path is None or not path.exists():
             return {}
         try:
-            return json.loads(path.read_text(encoding="utf-8"))
+            data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return {}
+        if not isinstance(data, dict):
+            return {}
+        return data
 
     def write_config(self, data: Dict) -> None:
         """Write *data* to the JetBrains Junie MCP config file."""
