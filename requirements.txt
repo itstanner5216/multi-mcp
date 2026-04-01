@@ -14,7 +14,7 @@ jsonpatch==1.33
 jsonpointer==3.1.1
 jsonschema-specifications==2025.9.1
 jsonschema==4.26.0
-langchain-core==1.2.22
+langchain-core==1.2.23
 langchain-mcp-adapters==0.2.2
 langsmith==0.7.22
 loguru==0.7.3
@@ -22,10 +22,10 @@ markdown-it-py==4.0.0
 mcp==1.26.0
 mdurl==0.1.2
 packaging==26.0
-pydantic-core==2.41.5
+pydantic-core==2.44.0
 pydantic-settings==2.13.1
 pydantic==2.12.5
-pygments==2.19.2
+pygments==2.20.0
 pyjwt==2.12.1
 python-dotenv==1.2.2
 python-multipart==0.0.22
@@ -35,7 +35,7 @@ requests-toolbelt==1.0.0
 requests==2.33.0
 rich==14.3.3
 rpds-py==0.30.0
-sse-starlette==3.3.3
+sse-starlette==3.3.4
 starlette==0.52.1
 tenacity==9.1.4
 typing-extensions==4.15.0
