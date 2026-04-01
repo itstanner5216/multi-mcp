@@ -33,7 +33,7 @@ uv run main.py --transport stdio
 uv run main.py --transport sse --host 0.0.0.0 --port 8080
 
 # With custom config file
-uv run main.py --config ./examples/config/mcp_k8s.json
+uv run main.py --config ./examples/config/mcp.json
 
 # Quick development run
 make run
@@ -45,7 +45,6 @@ make run
 make test-proxy      # Core proxy functionality  
 make test-e2e        # End-to-end integration tests
 make test-lifecycle  # Client lifecycle management
-make test-k8s        # Kubernetes deployment tests (requires docker-build)
 
 # All tests
 make all-test
@@ -54,16 +53,11 @@ make all-test
 pytest -s tests/proxy_test.py
 ```
 
-### Docker & Kubernetes
+### Docker
 ```bash
 # Build and run locally
 make docker-build
 make docker-run
-
-# Kubernetes with Kind
-kind create cluster --name multi-mcp-test
-kind load docker-image multi-mcp --name multi-mcp-test
-kubectl apply -f examples/k8s/multi-mcp.yaml
 ```
 
 ### Docker Container Details
@@ -148,7 +142,6 @@ Tools are internally namespaced using `_make_key()` and `_split_key()` static me
 ### Testing Strategy
 - **Unit tests**: Focus on individual components (proxy, client manager)
 - **Integration tests**: End-to-end flows with real MCP tools
-- **K8s tests**: Deployment and service exposure validation
 
 ### Project Structure
 - `main.py` - Entry point CLI interface using `MultiMCP` class

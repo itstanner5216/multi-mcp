@@ -4,12 +4,6 @@ Root-level pytest configuration.
 Adds backward-compatible context-manager and connect_to_server() support to
 langchain-mcp-adapters >= 0.1.0, which removed these in that release.
 
-k8s_test.py was written against the 0.0.x API:
-
-    async with MultiServerMCPClient() as client:
-        await client.connect_to_server("server", transport="sse", url=url)
-        tools = await client.get_tools()
-
 In 0.2.x the constructor stores connections in self.connections dict and
 get_tools() creates sessions on-the-fly from that dict.  The shim simply:
   1. Makes __aenter__/__aexit__ no-ops (return self / pass).

@@ -247,7 +247,7 @@ class RetrievalPipeline:
         """Return (project_type, is_confident) based on telemetry tokens.
 
         Classification precedence (first match wins):
-        1. infrastructure — terraform/kubernetes/helm signals
+        1. infrastructure — terraform/helm signals
         2. rust_cli       — Cargo.toml or lang:rust
         3. python_web     — pyproject.toml or lang:python
         4. node_web       — package.json or lang:javascript/typescript
@@ -260,7 +260,7 @@ class RetrievalPipeline:
         tokens = evidence.merged_tokens
         token_keys = set(tokens.keys())
 
-        infra_signals = {"infra:terraform", "infra:kubernetes", "manifest:Chart.yaml"}
+        infra_signals = {"infra:terraform", "manifest:Chart.yaml"}
         if token_keys & infra_signals:
             return "infrastructure", True
 

@@ -20,7 +20,7 @@ STATIC_CATEGORIES: dict[str, dict[str, list[str]]] = {
     },
     "infrastructure": {
         "always": ["filesystem", "shell", "web_search"],
-        "likely": ["terraform", "kubectl", "docker", "helm"],
+        "likely": ["terraform", "docker"],
     },
     "generic": {
         "always": ["filesystem", "shell", "web_search", "github"],
@@ -31,5 +31,5 @@ STATIC_CATEGORIES: dict[str, dict[str, list[str]]] = {
 TIER6_NAMESPACE_PRIORITY: list[str] = [
     "filesystem", "shell", "web_search", "github",
     "docker", "npm", "pip", "cargo",
-    "kubectl", "terraform", "slack", "context7",
+    "terraform", "slack", "context7",
 ]

@@ -58,7 +58,7 @@ MAX_FAMILY_CONTRIBUTION: float = 0.35  # No single family > 35% of total token w
 MAX_README_TOKENS: int = 20            # Cap readme-derived tokens
 
 _TECH_WORDS = re.compile(
-    r"\b(docker|kubernetes|k8s|postgres|mysql|redis|mongodb|react|vue|angular"
+    r"\b(docker|postgres|mysql|redis|mongodb|react|vue|angular"
     r"|django|flask|fastapi|rails|spring|rust|golang|typescript|python|node)\b",
     re.IGNORECASE,
 )
