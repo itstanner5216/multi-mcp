@@ -40,24 +40,41 @@ def _make_registry(n: int = 5) -> dict:
 class TestRealProxySessionsDistinctIds:
     """V-05 replacement: verify session ID derivation and isolation."""
 
-    def test_sse_session_id_extraction_from_scope(self):
-        """SSE transport derives session_id from ASGI scope, not 'default'.
+    @pytest.mark.anyio
+    async def test_sse_session_id_extraction_from_scope(self) -> None:
+        """SSE-style session IDs are propagated into per-session state, not forced to 'default'.
 
-        This is the Phase 8 fix: transport-derived session IDs replace the
-        hardcoded 'default' string.
+        This test exercises the retrieval pipeline with a non-default session ID and verifies
+        that the resulting session state records the provided ID. This guards against regressions
+        where a hardcoded 'default' session ID is used instead of a transport-derived value.
         """
-        import inspect
-        import src.multimcp.mcp_proxy as proxy_module
-
-        source = inspect.getsource(proxy_module)
-
-        # Phase 8 wired transport-derived session IDs via scope
-        # The proxy must NOT hardcode 'default' as the only session ID
-        # (it may still have 'default' as a fallback, but SSE must derive real IDs)
-        assert "session_id" in source, (
-            "mcp_proxy.py must reference session_id for per-session routing"
+        registry = _make_registry(2)
+        config = RetrievalConfig(
+            enabled=True,
+            rollout_stage="shadow",
+            shadow_mode=True,
+            top_k=1,
+            max_k=2,
+        )
+        session_manager = SessionStateManager(config)
+        pipeline = RetrievalPipeline(
+            retriever=PassthroughRetriever(),
+            session_manager=session_manager,
+            logger=NullLogger(),
+            config=config,
+            tool_registry=registry,
         )
 
+        session_id = "session-alpha-001"
+        assert session_id != "default", "Precondition: session ID used in test must not be 'default'"
+
+        # Invoke the pipeline with the non-default session ID to ensure it is honored.
+        tools = await pipeline.get_tools_for_list(session_id)
+        assert len(tools) > 0, "Pipeline must return tools for the provided session ID"
+
+        state = pipeline._routing_states.get(session_id)
+        assert state is not None, f"Pipeline must track state for {session_id}"
+        assert state.session_id == session_id, "State must record the non-default session ID"
     @pytest.mark.anyio
     async def test_real_proxy_sessions_distinct_ids(self):
         """Two pipeline sessions with distinct IDs accumulate separate state.
