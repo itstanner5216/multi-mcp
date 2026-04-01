@@ -106,7 +106,7 @@ async def test_shadow_stage_scoring_executes():
 
     await pipeline.get_tools_for_list(sid)
 
-    logger.log_ranking_event.assert_called_once(), (
+    assert logger.log_ranking_event.call_count == 1, (
         "log_ranking_event must be called even in shadow mode"
     )
 
