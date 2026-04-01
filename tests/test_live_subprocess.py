@@ -34,8 +34,34 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-SCENARIO_A_PORT = _find_free_port()
-SCENARIO_B_PORT = _find_free_port()
+class _LazyPort:
+    """Lazy port selector to avoid choosing ports at import time.
+
+    The port is allocated on first use and then cached for subsequent calls.
+    """
+
+    def __init__(self) -> None:
+        self._value: int | None = None
+
+    def _ensure_value(self) -> int:
+        if self._value is None:
+            self._value = _find_free_port()
+        return self._value
+
+    def __int__(self) -> int:
+        return self._ensure_value()
+
+    def __str__(self) -> str:
+        return str(self._ensure_value())
+
+    @property
+    def value(self) -> int:
+        """Return the allocated port as an int."""
+        return self._ensure_value()
+
+
+SCENARIO_A_PORT = _LazyPort()
+SCENARIO_B_PORT = _LazyPort()
 CONFIG_A = str(REPO_ROOT / "examples" / "config" / "mcp.json")
 RETRIEVAL_HELPER = str(REPO_ROOT / "tests" / "tools" / "retrieval_server.py")
 
