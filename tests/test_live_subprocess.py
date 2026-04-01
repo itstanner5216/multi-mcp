@@ -275,8 +275,8 @@ def scenario_b_proc():
     proc = subprocess.Popen(
         [sys.executable, RETRIEVAL_HELPER, json_path, str(SCENARIO_B_PORT)],
         cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         env=env,
     )
     yield proc
