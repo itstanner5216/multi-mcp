@@ -253,7 +253,7 @@ def scenario_b_proc():
     json_config = {
         "mcpServers": {
             "calculator": {
-                "command": "python",
+                "command": sys.executable,
                 "args": ["./tests/tools/calculator.py"],
                 "always_on": True,
             }
