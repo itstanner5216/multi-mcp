@@ -47,12 +47,6 @@ class MockBMXFRetriever(ToolRetriever):
     async def retrieve(self, context: RetrievalContext, candidates) -> list[ScoredTool]:
         return []
 
-    async def retrieve_for(self, context, candidates) -> list[ScoredTool]:
-        return [
-            ScoredTool(tool_key=key, tool_mapping=tm, score=float(i + 1))
-            for i, (key, tm) in enumerate(candidates[:3])
-        ]
-
 
 class TestRRFCalledOnTurnGt0:
     """weighted_rrf() is invoked at runtime when turn > 0."""

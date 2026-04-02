@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 def main() -> None:
+    """Parse CLI args and start the MultiMCP SSE server with the given JSON config."""
     if len(sys.argv) < 2:
         print("Usage: retrieval_server.py <json_path> [port]", file=sys.stderr)
         sys.exit(1)

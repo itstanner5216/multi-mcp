@@ -34,34 +34,6 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
-class _LazyPort:
-    """Lazy port selector to avoid choosing ports at import time.
-
-    The port is allocated on first use and then cached for subsequent calls.
-    """
-
-    def __init__(self) -> None:
-        self._value: int | None = None
-
-    def _ensure_value(self) -> int:
-        if self._value is None:
-            self._value = _find_free_port()
-        return self._value
-
-    def __int__(self) -> int:
-        return self._ensure_value()
-
-    def __str__(self) -> str:
-        return str(self._ensure_value())
-
-    @property
-    def value(self) -> int:
-        """Return the allocated port as an int."""
-        return self._ensure_value()
-
-
-SCENARIO_A_PORT = _LazyPort()
-SCENARIO_B_PORT = _LazyPort()
 CONFIG_A = str(REPO_ROOT / "examples" / "config" / "mcp.json")
 RETRIEVAL_HELPER = str(REPO_ROOT / "tests" / "tools" / "retrieval_server.py")
 
@@ -107,7 +79,8 @@ async def _mcp_call_tool(port: int, tool_name: str, args: dict) -> Any:
 
 @pytest.fixture(scope="module")
 def scenario_a_proc():
-    """Start a real multi-mcp SSE subprocess on SCENARIO_A_PORT."""
+    """Start a real multi-mcp SSE subprocess on a dynamically allocated port."""
+    port = _find_free_port()
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -115,12 +88,12 @@ def scenario_a_proc():
             "start",
             "--transport", "sse",
             "--host", "127.0.0.1",
-            "--port", str(SCENARIO_A_PORT),
+            "--port", str(port),
             "--config", CONFIG_A,
         ],
         cwd=str(REPO_ROOT),
     )
-    yield proc
+    yield proc, port
     proc.terminate()
     try:
         proc.wait(timeout=5)
@@ -132,12 +105,13 @@ def scenario_a_proc():
 @pytest.fixture(scope="module")
 async def scenario_a(scenario_a_proc):
     """Wait for the Scenario A server to be healthy before running tests."""
-    ready = await _wait_for_health(SCENARIO_A_PORT, timeout=20.0)
+    proc, port = scenario_a_proc
+    ready = await _wait_for_health(port, timeout=20.0)
     assert ready, (
-        f"Scenario A server on port {SCENARIO_A_PORT} did not become healthy within 20s. "
+        f"Scenario A server on port {port} did not become healthy within 20s. "
         "Check the subprocess logs for details."
     )
-    return SCENARIO_A_PORT
+    return port
 
 
 class TestScenarioA:
@@ -296,14 +270,15 @@ def scenario_b_proc():
     tmp.close()
 
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT)}
+    port = _find_free_port()
     proc = subprocess.Popen(
-        [sys.executable, RETRIEVAL_HELPER, json_path, str(SCENARIO_B_PORT)],
+        [sys.executable, RETRIEVAL_HELPER, json_path, str(port)],
         cwd=str(REPO_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         env=env,
     )
-    yield proc
+    yield proc, port
     proc.terminate()
     try:
         proc.wait(timeout=5)
@@ -316,10 +291,11 @@ def scenario_b_proc():
 @pytest.fixture(scope="module")
 async def scenario_b(scenario_b_proc):
     """Wait for the Scenario B server to be healthy + always_on server to connect."""
-    ready = await _wait_for_health(SCENARIO_B_PORT, timeout=20.0)
+    proc, port = scenario_b_proc
+    ready = await _wait_for_health(port, timeout=20.0)
     assert ready, (
-        f"Scenario B server on port {SCENARIO_B_PORT} did not become healthy within 20s. "
-        f"stderr: {(await asyncio.to_thread(scenario_b_proc.stderr.read, 4096)).decode(errors='replace') if scenario_b_proc.stderr else ''}"
+        f"Scenario B server on port {port} did not become healthy within 20s. "
+        "Check the subprocess logs for details."
     )
 
     # Poll /mcp_tools until calculator tools and request_tool are registered
@@ -328,7 +304,7 @@ async def scenario_b(scenario_b_proc):
     async with httpx.AsyncClient() as client:
         while time.monotonic() < deadline:
             try:
-                r = await client.get(f"http://127.0.0.1:{SCENARIO_B_PORT}/mcp_tools", timeout=2.0)
+                r = await client.get(f"http://127.0.0.1:{port}/mcp_tools", timeout=2.0)
                 if r.status_code == 200:
                     tools = r.json().get("tools", {})
                     # Check for calculator tools (always_on server)
@@ -343,9 +319,9 @@ async def scenario_b(scenario_b_proc):
 
     assert tools_ready, (
         f"Calculator tools did not appear in /mcp_tools within 20s. "
-        f"stderr: {(await asyncio.to_thread(scenario_b_proc.stderr.read, 4096)).decode(errors='replace') if scenario_b_proc.stderr else ''}"
+        "Check the subprocess logs for details."
     )
-    return SCENARIO_B_PORT
+    return port
 
 
 class TestScenarioB:

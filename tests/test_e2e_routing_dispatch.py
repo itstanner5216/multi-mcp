@@ -7,7 +7,7 @@ This test verifies that the actual runtime dispatch works — the routing tool n
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -45,7 +45,7 @@ class TestRequestToolCallable:
         proxy.retrieval_pipeline = None
 
         # Patch handle_routing_call at the source module so the lazy import in _call_tool gets it
-        # (handle_routing_call is synchronous, so MagicMock is correct here)
+        # (handle_routing_call is synchronous, so patch() uses a regular Mock by default)
         with patch(
             "src.multimcp.retrieval.routing_tool.handle_routing_call",
             return_value=[types.TextContent(type="text", text="describe result")],

@@ -223,7 +223,9 @@ async def _run_bootstrap(
 
 
 class TestConfigDrivenPipelineInit:
-    @pytest.mark.asyncio
+    """Validates retrieval pipeline bootstrap wiring from YAML retrieval settings."""
+
+    @pytest.mark.anyio
     async def test_run_builds_retrieval_pipeline_from_yaml_retrieval_settings(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -269,7 +271,7 @@ class TestConfigDrivenPipelineInit:
         assert pipeline_kwargs["tool_registry"] is proxy.tool_to_server
         assert pipeline_kwargs["telemetry_scanner"] is telemetry_scanner
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize(
         ("scorer", "expected_retriever_kind"),
         [
@@ -299,7 +301,7 @@ class TestConfigDrivenPipelineInit:
         with pytest.raises(ValidationError, match="scorer"):
             RetrievalSettings(enabled=True, scorer="unknown-scorer")
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize(
         ("log_path", "expected_logger_kind"),
         [
@@ -330,7 +332,7 @@ class TestConfigDrivenPipelineInit:
             assert capture.logger_calls[0][1] == Path(resolved_log_path)
             assert pipeline_kwargs["logger"].log_path == Path(resolved_log_path)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     @pytest.mark.parametrize("enabled", [True, False])
     async def test_run_wires_rolling_metrics_only_when_enabled(
         self,

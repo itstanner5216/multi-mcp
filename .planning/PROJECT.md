@@ -109,4 +109,4 @@ Last updated: 2026-03-30
 5. "What This Is" still accurate? → Update if drifted
 
 ---
-*Last updated: 2026-03-29 — Phase 4 complete (rollout-hardening)*
+*Last updated: 2026-03-30 — Phase 9 complete (rollout-activation)*

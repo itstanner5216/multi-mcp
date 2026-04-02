@@ -169,14 +169,31 @@ class TestRealProxySessionsDistinctIds:
         """STDIO transport uses a stable per-connection session ID (not 'default').
 
         Phase 8 fix: even STDIO uses a real session ID derived from transport context.
+        Behavioral test: verifies that _get_session_id() returns a non-empty string
+        and raises RuntimeError when called without an active session.
         """
-        import inspect
-        import src.multimcp.mcp_proxy as proxy_module
+        from src.multimcp.mcp_proxy import MCPProxyServer
+        import uuid
 
-        source = inspect.getsource(proxy_module)
-        # Phase 8 introduced real session ID derivation — 'default' should not
-        # be the only or primary session ID assignment
-        # The proxy may use a fallback but Phase 8 must have wired transport IDs
-        assert "session_id" in source, (
-            "Proxy must reference session_id (Phase 8: transport-derived IDs)"
-        )
+        proxy = MCPProxyServer.__new__(MCPProxyServer)
+        proxy._server_session = None
+        proxy._session_ids = {}
+
+        # Without an active session, _get_session_id should raise
+        try:
+            proxy._get_session_id()
+            assert False, "_get_session_id() must raise RuntimeError when _server_session is None"
+        except RuntimeError as exc:
+            assert "session" in str(exc).lower(), (
+                f"Expected RuntimeError about session, got: {exc}"
+            )
+
+        # With a fake session object, _get_session_id should return a stable UUID hex
+        fake_session = object()
+        proxy._server_session = fake_session
+        sid1 = proxy._get_session_id()
+        sid2 = proxy._get_session_id()
+        assert sid1 == sid2, "Session ID must be stable for the same session object"
+        assert len(sid1) == 32, f"Expected 32-char UUID hex, got: {sid1!r}"
+        # Confirm it parses as a valid hex string
+        int(sid1, 16)

@@ -10,7 +10,7 @@
 
 ## Codebase Reconnaissance
 
-```
+```text
 CODEBASE RECONNAISSANCE:
 ├── Project Structure: Python package at src/multimcp/, retrieval subsystem at src/multimcp/retrieval/
 ├── Tech Stack: Python 3.10+, MCP SDK (mcp>=1.26.0), Pydantic 2+, pytest + pytest-asyncio (auto mode), loguru, anyio
@@ -36,7 +36,7 @@ CODEBASE RECONNAISSANCE:
 
 ## File Inventory
 
-```
+```text
 FILE INVENTORY:
 ├── Files to MODIFY:
 │   ├── src/multimcp/retrieval/models.py         — Task 1.1: Add SearchSessionState, SearchEvent dataclasses
@@ -70,7 +70,7 @@ FILE INVENTORY:
 
 ## Task Decomposition
 
-```
+```text
 TASK DECOMPOSITION:
 ├── Task 1.1: Update models.py
 │   ├── Modifies: src/multimcp/retrieval/models.py
@@ -158,7 +158,7 @@ TASK DECOMPOSITION:
 
 ## Conflict Analysis
 
-```
+```text
 CONFLICT ANALYSIS:
 ├── File Conflicts: NONE within any wave
 │   └── Every file is modified by exactly one task
@@ -181,7 +181,7 @@ CONFLICT ANALYSIS:
 
 ## Wave Assignment
 
-```
+```text
 WAVE ASSIGNMENT:
 ├── Wave 1 (5 tasks in parallel):
 │   ├── Task 1.1: Update models.py          — modifies src/multimcp/retrieval/models.py
@@ -1525,7 +1525,7 @@ A comprehensive test file at `tests/test_search_pipeline.py` with full coverage 
 - Current pipeline wiring: `src/multimcp/multi_mcp.py:L280-L360` — builds RetrievalConfig, creates retriever, creates pipeline
 - Current pipeline construction: `src/multimcp/multi_mcp.py:L340-L350` — `RetrievalPipeline(retriever=..., session_manager=..., logger=..., config=..., tool_registry=..., telemetry_scanner=..., rolling_metrics=...)`
 - New assembler import needed: `from src.multimcp.retrieval.assembler import TieredAssembler`
-- Pipeline constructor (from Task 2.1): now also uses `assembler` parameter (already in __init__ signature: `assembler: Optional["TieredAssembler"] = None`)
+- Pipeline constructor (from Task 2.1): now also uses `assembler` parameter (already in `__init__` signature: `assembler: Optional["TieredAssembler"] = None`)
 
 **Implementation Details:**
 
